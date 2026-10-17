@@ -1,5 +1,7 @@
 # Benchmark methodology
 
+The [node boundary and query allocation review](node-boundary-review.md) compares failed-query memory growth, fresh-wrapper capture materialization and warm-cache/traversal controls, including the measured tradeoffs.
+
 The [ownership and re-entry review](ownership-review.md) records the follow-up GC and cursor fixes, expanded differential query checks, and both mixed-workload and isolated cursor measurements, including their variability.
 
 The [final standalone quality review](final-quality-review.md) records the field cursor leak fix, memory measurements, API boundary corrections and final performance controls against the previous package revision.
