@@ -1,6 +1,7 @@
 #include "tree_sitter/api.h"
 
 #include <napi.h>
+#include "./wasm.h"
 
 #ifndef NODE_TREE_SITTER_ADDON_DATA_H_
 #define NODE_TREE_SITTER_ADDON_DATA_H_
@@ -26,6 +27,7 @@ public:
 
   // parser
   Napi::FunctionReference parser_constructor;
+  WasmEngine wasm_engine;
   Napi::FunctionReference string_slice;
 
   // query

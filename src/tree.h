@@ -5,7 +5,6 @@
 #include "tree_sitter/api.h"
 
 #include <napi.h>
-#include <node_object_wrap.h>
 #include <unordered_map>
 
 namespace node_tree_sitter {
@@ -26,10 +25,12 @@ class Tree final : public Napi::ObjectWrap<Tree> {
   };
 
   TSTree *tree_;
+  bool snapshot_ = false;
   std::unordered_map<const void *, NodeCacheEntry *> cached_nodes_;
 
  private:
   Napi::Value Edit(const Napi::CallbackInfo &info);
+  Napi::Value Copy(const Napi::CallbackInfo &info);
   Napi::Value RootNode(const Napi::CallbackInfo &info);
   Napi::Value RootNodeWithOffset(const Napi::CallbackInfo &info);
   Napi::Value PrintDotGraph(const Napi::CallbackInfo &info);

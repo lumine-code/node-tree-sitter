@@ -1,128 +1,69 @@
-# Node Tree-sitter
+# node-tree-sitter
 
-[![CI][ci]](https://github.com/tree-sitter/node-tree-sitter/actions/workflows/ci.yml)
-[![npm][npm]](https://npmjs.com/package/tree-sitter)
-[![docs][docs]](https://tree-sitter.github.io/node-tree-sitter)
+Provides native Tree-sitter bindings with portable Wasm grammars.
 
-This module provides Node.js bindings to the [tree-sitter] parsing library.
+Fork of [tree-sitter/node-tree-sitter](https://github.com/tree-sitter/node-tree-sitter).
 
-## Installation
+## Features
 
-```sh
-npm install tree-sitter
-```
+- **Portable grammars**: loads Tree-sitter `.wasm` language modules through Wasmtime while keeping syntax trees native.
+- **Background parsing**: compiles grammars and parses owned text snapshots outside the JavaScript event loop.
+- **Immutable snapshots**: retains each result's original text, coordinates and caller-supplied revision during subsequent incremental parses.
+- **Cancellation**: supports AbortSignal, explicit cancellation and parser closure.
+- **Syntax queries**: exposes native nodes, cursors and synchronous Tree-sitter queries through Node-API.
+- **Validation**: compares unchanged Wasm fixtures against web-tree-sitter and checks incremental edits, Unicode, cancellation and worker teardown.
 
-## Basic Usage
+## Building
 
-### Prerequisites
-
-First, you'll need a Tree-sitter grammar for the language you want to parse. There are many [existing grammars][grammars],
-such as [tree-sitter-javascript][javascript]. These grammars can typically be installed with a package manager like NPM,
-so long as the author has published them.
+Requires Node.js 24.18 or newer, a C/C++ toolchain supported by node-gyp, Python and `tar`. The editor and its dependencies do not need to be changed to build or test this repository.
 
 ```sh
-npm install tree-sitter-javascript
+git clone --recurse-submodules https://github.com/lumine-code/node-tree-sitter.git
+cd node-tree-sitter
+npm ci --ignore-scripts
+npm run setup:wasmtime
+npm run rebuild
+npm test
 ```
 
-You can also develop a new grammar by using the [Tree-sitter CLI][cli] and following the [docs][ts docs].
+The explicit setup command downloads a pinned Wasmtime 48.0.1 C API archive and verifies its SHA-256 before extraction. It supports Windows, macOS and glibc Linux on x64 and ARM64. Alternatively, set `WASMTIME_ROOT` to a compatible C API distribution or source build containing `include/` and `lib/`. No download runs from the package install hook. Wasmtime is linked statically into the addon; language packages remain platform-independent Wasm files. This repository contains no Rust implementation, although Wasmtime itself is built from Rust.
 
-### Parsing Source Code
+Source installation from an npm or Git package also requires a prepared `WASMTIME_ROOT` when no matching prebuild is available. This initial fork does not publish prebuilds or releases automatically on branch pushes.
 
-Once you've got your grammar, create a parser with that grammar.
+## Usage
 
-```javascript
-const Parser = require('tree-sitter');
-const JavaScript = require('tree-sitter-javascript');
+```js
+const fs = require('node:fs/promises');
+const {loadLanguage, BackgroundParser, Query} = require('@lumine-code/node-tree-sitter');
 
-const parser = new Parser();
-parser.setLanguage(JavaScript);
+const language = await loadLanguage('javascript', await fs.readFile('javascript.wasm'));
+const parser = new BackgroundParser(language);
+try {
+  const before = await parser.parse('const x = 1;', {revision: 1});
+  const after = await parser.parse('const name = 1;', {
+    previous: before,
+    edits: [{startIndex: 6, oldEndIndex: 7, newText: 'name'}],
+    revision: 2,
+  });
+  console.log(before.rootNode.text); // const x = 1;
+  console.log(after.rootNode.text); // const name = 1;
+  const query = new Query(language, '(identifier) @name');
+  console.log(query.captures(after.rootNode).map(capture => capture.node.text));
+} finally {
+  parser.close();
+}
 ```
 
-Then you can parse some source code,
+The language name is the grammar export name, such as `javascript` or `python`, rather than the Wasm filename. Parser offsets and columns use UTF-16 code units. See [the background parsing contract](docs/background-parsing.md) for ownership, cancellation and limits.
 
-```javascript
-const sourceCode = 'let x = 1; console.log(x);';
-const tree = parser.parse(sourceCode);
+## Benchmarks
+
+```sh
+npm run benchmark
 ```
 
-and inspect the syntax tree.
+The benchmark runs web-tree-sitter, synchronous native parsing and background native parsing in separate Node processes against the same JavaScript Wasm fixture. It reports cold initialization, initial and incremental parse duration, synchronous submission time, timer gaps, memory and a syntax-tree checksum. `BENCH_LINES` and `BENCH_SAMPLES` control workload size. See [benchmark methodology](docs/benchmarks.md). These results measure the standalone binding, not editor rendering or display-layer performance.
 
-```javascript
-console.log(tree.rootNode.toString());
+## Contributing
 
-// (program
-//   (lexical_declaration
-//     (variable_declarator (identifier) (number)))
-//   (expression_statement
-//     (call_expression
-//       (member_expression (identifier) (property_identifier))
-//       (arguments (identifier)))))
-
-const callExpression = tree.rootNode.child(1).firstChild;
-console.log(callExpression);
-
-// {
-//   type: 'call_expression',
-//   startPosition: {row: 0, column: 16},
-//   endPosition: {row: 0, column: 30},
-//   startIndex: 0,
-//   endIndex: 30
-// }
-```
-
-If your source code *changes*, you can update the syntax tree. This is much faster than the first parse.
-
-```javascript
-// In the code, we replaced 'let' with 'const'.
-// So, we set our old end index to 3, and our new end index to 5.
-// Note that the end index is exclusive.
-const newSourceCode = 'const x = 1; console.log(x);';
-//                        ^ ^
-// indices:               3 5
-// points:            (0,3) (0,5)
-
-tree.edit({
-  startIndex: 0,
-  oldEndIndex: 3,
-  newEndIndex: 5,
-  startPosition: {row: 0, column: 0},
-  oldEndPosition: {row: 0, column: 3},
-  newEndPosition: {row: 0, column: 5},
-});
-
-const newTree = parser.parse(newSourceCode, tree);
-```
-
-### Parsing Text From a Custom Data Structure
-
-If your text is stored in a data structure other than a single string, such as a rope or array, you can parse it by supplying
-a callback to `parse` instead of a string:
-
-```javascript
-const sourceLines = [
-  'let x = 1;',
-  'console.log(x);'
-];
-
-const tree = parser.parse((index, position) => {
-  let line = sourceLines[position.row];
-  if (line) {
-    return line.slice(position.column);
-  }
-});
-```
-
-### Further Reading
-
-It's recommended that you read the [Tree-sitter documentation][usage docs] on using parsers to get a higher-level overview
-of the API. Once you're comfortable with the basics, you can explore the [full API documentation](https://tree-sitter.github.io/node-tree-sitter),
-which should map closely to the C API, though there are some differences.
-
-[ci]: https://img.shields.io/github/actions/workflow/status/tree-sitter/node-tree-sitter/ci.yml?logo=github&label=CI
-[cli]: https://github.com/tree-sitter/tree-sitter/tree/master/cli
-[docs]: https://img.shields.io/badge/docs-website-blue
-[npm]: https://img.shields.io/npm/v/tree-sitter?logo=npm
-[grammars]: https://github.com/tree-sitter/tree-sitter/wiki/List-of-parsers
-[javascript]: http://github.com/tree-sitter/tree-sitter-javascript
-[ts docs]: https://tree-sitter.github.io/tree-sitter/creating-parsers
-[usage docs]: https://tree-sitter.github.io/tree-sitter/using-parsers
+Got ideas to make this package better, found a bug, or want to help add new features? Just drop your thoughts on GitHub. Any feedback is welcome!

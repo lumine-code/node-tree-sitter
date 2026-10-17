@@ -7,6 +7,7 @@
 #include "./query.h"
 #include "./tree.h"
 #include "./tree_cursor.h"
+#include "./wasm.h"
 
 #include <napi.h>
 
@@ -26,6 +27,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
   Query::Init(env, exports);
   Tree::Init(env, exports);
   TreeCursor::Init(env, exports);
+  InitWasm(env, exports);
 
   return exports;
 }

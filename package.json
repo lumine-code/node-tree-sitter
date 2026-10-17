@@ -1,58 +1,50 @@
 {
-  "name": "tree-sitter",
-  "version": "0.25.1",
-  "description": "Node.js bindings to the Tree-sitter parsing library",
-  "repository": "http://github.com/tree-sitter/node-tree-sitter",
+  "name": "@lumine-code/node-tree-sitter",
+  "author": "lumine-code",
+  "version": "1.0.0",
+  "description": "Provides native Tree-sitter bindings with portable Wasm grammars.",
+  "repository": "https://github.com/lumine-code/node-tree-sitter",
   "publishConfig": {
     "access": "public"
   },
   "license": "MIT",
-  "author": {
-    "name": "Max Brunsfeld",
-    "email": "maxbrunsfeld@gmail.com"
-  },
-  "maintainers": [
-    {
-      "name": "Amaan Qureshi",
-      "email": "amaanq12@gmail.com"
-    }
-  ],
-  "contributors": [
-    {
-      "name": "Segev Finer",
-      "email": "segev208@gmail.com"
-    },
-    {
-      "name": "Boris Verkhovskiy",
-      "email": "boris.verk@gmail.com"
-    }
-  ],
   "main": "index.js",
   "types": "tree-sitter.d.ts",
   "keywords": [
+    "tree-sitter",
+    "webassembly",
     "incremental",
     "parsing",
-    "tree-sitter"
+    "node-api"
   ],
   "files": [
+    "index.js",
+    "background-parser.js",
     "binding.gyp",
     "tree-sitter.d.ts",
-    "prebuilds/*",
-    "src/*",
-    "vendor/tree-sitter/lib/include/*",
-    "vendor/tree-sitter/lib/src/*"
+    "prebuilds",
+    "src",
+    "script",
+    "test",
+    "benchmark",
+    "docs",
+    "vendor/tree-sitter/lib",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES"
   ],
   "dependencies": {
-    "node-addon-api": "^8.5.0",
+    "node-addon-api": "^8.9.2",
     "node-gyp-build": "^4.8.4"
   },
   "devDependencies": {
-    "@types/node": "^25.0.3",
+    "@types/node": "^26.6.5",
     "@types/tmp": "^0.2.6",
-    "glob": "^13.0.0",
-    "node-gyp": "^12.1.0",
+    "electron": "44.9.0",
+    "eslint": "^10.13.0",
+    "node-gyp": "^13.1.0",
     "prebuildify": "^6.0.1",
-    "tmp": "^0.2.5",
+    "prettier": "^3.9.10",
+    "tmp": "^0.2.7",
     "tree-sitter-c": "^0.24.1",
     "tree-sitter-embedded-template": "^0.25.0",
     "tree-sitter-html": "^0.23.2",
@@ -62,15 +54,21 @@
     "tree-sitter-python": "^0.25.0",
     "tree-sitter-ruby": "^0.23.1",
     "tree-sitter-rust": "^0.24.0",
-    "typedoc": "^0.28.15",
-    "typedoc-plugin-rename-defaults": "^0.7.3",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2",
+    "web-tree-sitter": "0.27.1"
   },
   "scripts": {
-    "docs": "typedoc --out docs/api tree-sitter.d.ts --readme README.md",
     "install": "node-gyp-build",
     "build": "prebuildify --napi --strip",
     "rebuild": "node-gyp rebuild",
-    "test": "node -e \"require('child_process').spawnSync('node', ['--test', ...require('glob').sync('test/**/*.js')], {stdio:'inherit'})\""
+    "test": "node script/test.js",
+    "setup:wasmtime": "node script/setup-wasmtime.js",
+    "lint": "eslint background-parser.js script test/wasm_test.js benchmark",
+    "benchmark": "node benchmark/wasm.js",
+    "test:electron": "node script/electron-test.js"
+  },
+  "bugs": "https://github.com/lumine-code/node-tree-sitter/issues",
+  "engines": {
+    "node": ">=24.18.0"
   }
 }

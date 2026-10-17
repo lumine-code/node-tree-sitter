@@ -10,7 +10,12 @@ const util = require('util');
  * Tree
  */
 
-const {rootNode, rootNodeWithOffset, edit} = Tree.prototype;
+const {rootNode, rootNodeWithOffset, edit, copy} = Tree.prototype;
+Tree.prototype.copy = function() {
+  const tree = copy.call(this);
+  tree.input = this.input; tree.getText = this.getText; tree.language = this.language;
+  return tree;
+};
 
 Object.defineProperty(Tree.prototype, 'rootNode', {
   get() {
@@ -948,3 +953,10 @@ module.exports.Tree = Tree;
 module.exports.SyntaxNode = SyntaxNode;
 module.exports.TreeCursor = TreeCursor;
 module.exports.LookaheadIterator = LookaheadIterator;
+
+module.exports.loadLanguage = async (name, bytes) => {
+  const language = await binding.loadWasmLanguage(name, bytes);
+  initializeLanguageNodeClasses(language);
+  return language;
+};
+module.exports.BackgroundParser = require('./background-parser')(binding.BackgroundParser);

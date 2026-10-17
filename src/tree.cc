@@ -27,6 +27,7 @@ void Tree::Init(Napi::Env env, Napi::Object exports) {
 
   Function ctor = DefineClass(env, "Tree", {
     InstanceMethod("edit", &Tree::Edit, napi_default_method),
+    InstanceMethod("copy", &Tree::Copy, napi_default_method),
     InstanceMethod("rootNode", &Tree::RootNode, napi_default_method),
     InstanceMethod("rootNodeWithOffset", &Tree::RootNodeWithOffset, napi_default_method),
     InstanceMethod("printDotGraph", &Tree::PrintDotGraph, napi_default_method),
@@ -85,8 +86,13 @@ const Tree *Tree::UnwrapTree(const Napi::Value &value) {
   read_number_from_js(out, value, name);            \
   (*(out)) *= 2
 
+Napi::Value Tree::Copy(const Napi::CallbackInfo &info) {
+  return NewInstance(info.Env(), ts_tree_copy(tree_));
+}
+
 Napi::Value Tree::Edit(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
+  if (snapshot_) throw TypeError::New(env, "Cannot edit an immutable parse snapshot; use copy()");
   TSInputEdit edit;
   read_number_from_js(&edit.start_point.row, info[0], "startPosition.row");
   read_byte_count_from_js(&edit.start_point.column, info[1], "startPosition.column");

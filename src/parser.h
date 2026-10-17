@@ -4,7 +4,6 @@
 #include "tree_sitter/api.h"
 
 #include <napi.h>
-#include <node_object_wrap.h>
 
 namespace node_tree_sitter {
 
@@ -17,6 +16,8 @@ class Parser final : public Napi::ObjectWrap<Parser> {
 
 private:
   TSParser *parser_;
+  uint64_t timeout_micros_ = 0;
+  bool wasm_store_attached_ = false;
 
   Napi::Value SetLanguage(const Napi::CallbackInfo &);
   Napi::Value Parse(const Napi::CallbackInfo &);

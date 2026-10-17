@@ -1,8 +1,8 @@
 /** @module */
-declare module "tree-sitter" {
+declare module "@lumine-code/node-tree-sitter" {
   class Parser {
     /**
-     * Parse UTF8 text into a syntax tree.
+     * Parse UTF-16 text into a syntax tree.
      *
      * @param input - The text to parse, either as a string or a custom input function
      * that provides text chunks. If providing a function, it should return text chunks
@@ -104,6 +104,31 @@ declare module "tree-sitter" {
   }
 
   namespace Parser {
+    /** Compile a portable grammar without blocking the JavaScript event loop. */
+    export function loadLanguage(name: string, bytes: Buffer): Promise<Language>;
+    export interface SnapshotEdit {
+      startIndex: number;
+      oldEndIndex: number;
+      newText: string;
+    }
+    export interface Snapshot extends Tree {
+      readonly input: string;
+      readonly revision: number;
+    }
+    export interface BackgroundParseOptions {
+      previous?: Snapshot;
+      edits?: SnapshotEdit[];
+      includedRanges?: Range[];
+      signal?: AbortSignal;
+      revision?: number;
+    }
+    export class BackgroundParser {
+      constructor(language: Language);
+      parse(text: string, options?: BackgroundParseOptions): Promise<Snapshot>;
+      cancel(): void;
+      close(): void;
+    }
+
     /** Configuration options for parsing */
     export type Options = {
       /** Size of the internal parsing buffer */
@@ -183,11 +208,7 @@ declare module "tree-sitter" {
      * @param params - Parameters associated with the log message
      * @param type - The type of log message
      */
-    export type Logger = (
-      message: string,
-      params: { [param: string]: string },
-      type: "parse" | "lex"
-    ) => void;
+    export type Logger = (message: string, params: { [param: string]: string }, type: "parse" | "lex") => void;
 
     /** A function that provides text content for parsing based on byte index and position */
     export interface Input {
@@ -231,9 +252,9 @@ declare module "tree-sitter" {
       readonly type: string;
 
       /**
-        * This node's symbol name as it appears in the grammar,
-        * ignoring aliases
-        */
+       * This node's symbol name as it appears in the grammar,
+       * ignoring aliases
+       */
       readonly grammarType: string;
 
       /**
@@ -251,10 +272,10 @@ declare module "tree-sitter" {
       readonly isMissing: boolean;
 
       /**
-        * Whether this node is extra.
-        * Extra nodes represent things like comments, which are not
-        * required by the grammar but can appear anywhere.
-        */
+       * Whether this node is extra.
+       * Extra nodes represent things like comments, which are not
+       * required by the grammar but can appear anywhere.
+       */
       readonly isExtra: boolean;
 
       /**
@@ -704,6 +725,8 @@ declare module "tree-sitter" {
      * A tree that represents the syntactic structure of a source code file.
      */
     export interface Tree {
+      /** Create an independently editable shallow copy. */
+      copy(): Tree;
       /**
        * The root node of the syntax tree
        */
@@ -1054,15 +1077,15 @@ declare module "tree-sitter" {
     /** Information about a language's node types */
     type NodeInfo =
       | (BaseNode & {
-        /** The subtypes of this node if it's a supertype */
-        subtypes: BaseNode[];
-      })
+          /** The subtypes of this node if it's a supertype */
+          subtypes: BaseNode[];
+        })
       | (BaseNode & {
-        /** The fields within this node */
-        fields: { [name: string]: ChildNode };
-        /** The child nodes of this node */
-        children: ChildNode[];
-      });
+          /** The fields within this node */
+          fields: { [name: string]: ChildNode };
+          /** The child nodes of this node */
+          children: ChildNode[];
+        });
 
     /** Information about a language */
     interface Language {
@@ -1075,9 +1098,9 @@ declare module "tree-sitter" {
       /** The inner language object */
       language: unknown;
       /** The node type information of the language */
-      nodeTypeInfo: NodeInfo[];
+      nodeTypeInfo?: NodeInfo[];
     }
   }
 
-  export = Parser
+  export = Parser;
 }

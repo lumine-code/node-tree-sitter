@@ -3,6 +3,8 @@
 #include "./language.h"
 #include "./logger.h"
 #include "./tree.h"
+#include "./wasm.h"
+#include <chrono>
 
 #include <cstddef>
 #include <napi.h>
@@ -111,24 +113,15 @@ class CallbackInput final {
 
 class CallbackProgress final {
  public:
-  static TSParseOptions Make(const Napi::Function &func) {
-    TSParseOptions options;
-    auto *callback = new CallbackProgress();
-    callback->func = Napi::Persistent(func);
-    options.payload = static_cast<void *>(callback);
-    options.progress_callback = Cancel;
-    return options;
-  }
-
-  private:
   Napi::FunctionReference func;
-
+  uint64_t timeout = 0;
+  std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
   static bool Cancel(TSParseState *state) {
-    auto *callback = static_cast<CallbackProgress *>(state->payload);
-    Env env = callback->func.Env();
-    Number index = Number::New(env, state->current_byte_offset);
-    Boolean has_error = Boolean::New(env, state->has_error);
-    return callback->func({ index, has_error }).As<Boolean>();
+    auto *self = static_cast<CallbackProgress *>(state->payload);
+    if (self->timeout && std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - self->start).count() >= self->timeout) return true;
+    if (self->func.IsEmpty()) return false;
+    auto env = self->func.Env();
+    return self->func({Number::New(env, state->current_byte_offset), Boolean::New(env, state->has_error)}).As<Boolean>();
   }
 };
 
@@ -200,7 +193,12 @@ bool handle_included_ranges(Napi::Env env, TSParser *parser, Napi::Value arg) {
 Napi::Value Parser::SetLanguage(const Napi::CallbackInfo &info) {
   const TSLanguage *language = language_methods::UnwrapLanguage(info[0]);
   if (language != nullptr) {
-    ts_parser_set_language(parser_, language);
+    if (ts_language_is_wasm(language) && !wasm_store_attached_) {
+      try { ts_parser_set_wasm_store(parser_, NewWasmStore(GetWasmEngine(info.Env()))); }
+      catch (const std::exception &error) { throw Napi::Error::New(info.Env(), error.what()); }
+      wasm_store_attached_ = true;
+    }
+    if (!ts_parser_set_language(parser_, language)) throw Napi::Error::New(info.Env(), "Cannot assign parser language");
     return info.This();
   }
   return info.Env().Undefined();
@@ -234,13 +232,11 @@ Napi::Value Parser::Parse(const CallbackInfo &info) {
     }
   }
 
-  TSTree *tree;
-  if (info.Length() > 4 && info[4].IsFunction()) {
-    TSParseOptions options = CallbackProgress::Make(info[4].As<Function>());
-    tree = ts_parser_parse_with_options(parser_, old_tree, callback_input.Input(), options);
-  } else {
-    tree = ts_parser_parse(parser_, old_tree, callback_input.Input());
-  }
+  CallbackProgress progress;
+  progress.timeout = timeout_micros_;
+  if (info.Length() > 4 && info[4].IsFunction()) progress.func = Napi::Persistent(info[4].As<Function>());
+  TSParseOptions options{&progress, CallbackProgress::Cancel};
+  TSTree *tree = ts_parser_parse_with_options(parser_, old_tree, callback_input.Input(), options);
   return Tree::NewInstance(env, tree);
 }
 
@@ -258,7 +254,7 @@ Napi::Value Parser::IncludedRanges(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value Parser::TimeoutMicros(const Napi::CallbackInfo &info) {
-  uint64_t timeout_micros = ts_parser_timeout_micros(parser_);
+  uint64_t timeout_micros = timeout_micros_;
   return Number::New(info.Env(), static_cast<double>(timeout_micros));
 }
 
@@ -268,7 +264,7 @@ Napi::Value Parser::SetTimeoutMicros(const Napi::CallbackInfo &info) {
     throw TypeError::New(info.Env(), "First argument must be a number");
   }
   timeout_micros = info[0].As<Number>().Uint32Value();
-  ts_parser_set_timeout_micros(parser_, timeout_micros);
+  timeout_micros_ = timeout_micros;
   return info.This();
 }
 

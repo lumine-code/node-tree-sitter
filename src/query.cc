@@ -5,6 +5,7 @@
 #include <napi.h>
 #include <string>
 #include <vector>
+#include <chrono>
 
 using std::vector;
 using namespace Napi;
@@ -29,30 +30,21 @@ const char *query_error_names[] = {
   "TSQueryErrorField",
   "TSQueryErrorCapture",
   "TSQueryErrorStructure",
+  "TSQueryErrorLanguage",
 };
 
 class CallbackProgress final {
  public:
-  static TSQueryCursorOptions Make(const Napi::Function &func) {
-    TSQueryCursorOptions options;
-    auto *callback = new CallbackProgress();
-    callback->func = Napi::Persistent(func);
-    options.payload = static_cast<void *>(callback);
-    options.progress_callback = Cancel;
-    return options;
-  }
-
-  private:
   Napi::FunctionReference func;
-
+  uint64_t timeout = 0;
+  std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
   static bool Cancel(TSQueryCursorState *state) {
-    auto *callback = static_cast<CallbackProgress *>(state->payload);
-    Env env = callback->func.Env();
-    Number index = Number::New(env, state->current_byte_offset);
-    return callback->func({ index }).As<Boolean>();
+    auto *self = static_cast<CallbackProgress *>(state->payload);
+    if (self->timeout && std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - self->start).count() >= self->timeout) return true;
+    if (self->func.IsEmpty()) return false;
+    return self->func({Number::New(self->func.Env(), state->current_byte_offset)}).As<Boolean>();
   }
 };
-
 
 void Query::Init(Napi::Env env, Napi::Object exports) {
   auto *data = env.GetInstanceData<AddonData>();
@@ -241,13 +233,11 @@ Napi::Value Query::Matches(const Napi::CallbackInfo &info) {
   ts_query_cursor_set_byte_range(data->ts_query_cursor, start_index, end_index);
   ts_query_cursor_set_match_limit(data->ts_query_cursor, match_limit);
   ts_query_cursor_set_max_start_depth(data->ts_query_cursor, max_start_depth);
-  ts_query_cursor_set_timeout_micros(data->ts_query_cursor, timeout_micros);
-  if (info.Length() > 10 && info[10].IsFunction()) {
-    TSQueryCursorOptions options = CallbackProgress::Make(info[10].As<Function>());
-    ts_query_cursor_exec_with_options(data->ts_query_cursor, ts_query, root_node, &options);
-  } else {
-    ts_query_cursor_exec(data->ts_query_cursor, ts_query, root_node);
-  }
+  CallbackProgress progress;
+  progress.timeout = timeout_micros;
+  if (info.Length() > 10 && info[10].IsFunction()) progress.func = Napi::Persistent(info[10].As<Function>());
+  TSQueryCursorOptions options{&progress, CallbackProgress::Cancel};
+  ts_query_cursor_exec_with_options(data->ts_query_cursor, ts_query, root_node, &options);
 
   Array js_matches = Array::New(env);
   unsigned index = 0;
@@ -333,8 +323,10 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
   ts_query_cursor_set_byte_range(data->ts_query_cursor, start_index, end_index);
   ts_query_cursor_set_match_limit(data->ts_query_cursor, match_limit);
   ts_query_cursor_set_max_start_depth(data->ts_query_cursor, max_start_depth);
-  ts_query_cursor_set_timeout_micros(data->ts_query_cursor, timeout_micros);
-  ts_query_cursor_exec(data->ts_query_cursor, ts_query, root_node);
+  CallbackProgress progress;
+  progress.timeout = timeout_micros;
+  TSQueryCursorOptions options{&progress, CallbackProgress::Cancel};
+  ts_query_cursor_exec_with_options(data->ts_query_cursor, ts_query, root_node, &options);
 
   Array js_matches = Array::New(env);
   unsigned index = 0;

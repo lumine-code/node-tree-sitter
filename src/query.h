@@ -5,7 +5,6 @@
 #include "tree_sitter/api.h"
 
 #include <napi.h>
-#include <node_object_wrap.h>
 
 namespace node_tree_sitter {
 

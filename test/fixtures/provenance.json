@@ -1,0 +1,30 @@
+[
+  {
+    "name": "javascript",
+    "source": "https://github.com/lumine-code/language-javascript",
+    "revision": "043d75bfaa5bef24edeb5cc36f5c9ec396d01497",
+    "path": "grammars/javascript.wasm",
+    "sha256": "45d6d221f16e24654ce2710bef70e7b6172e32ff7c0054e2a3d838b968f1c1e7"
+  },
+  {
+    "name": "python",
+    "source": "https://github.com/lumine-code/language-python",
+    "revision": "cad3cc51c11fc557f2c7b2100c54a29730378c63",
+    "path": "grammars/python.wasm",
+    "sha256": "c3f54010192107b4a16a68a9ac13bb85ff4d881046607c35835b1e4f4efc0b65"
+  },
+  {
+    "name": "html",
+    "source": "https://github.com/lumine-code/language-html",
+    "revision": "76d58baa9436f0f8a4399cc090edcfd723f7c347",
+    "path": "grammars/html.wasm",
+    "sha256": "251edf58786ee41bf0c1d6c84a4ec8c7dd5bacdda3681d44bd6574dcce3f6797"
+  },
+  {
+    "name": "json",
+    "source": "https://github.com/lumine-code/language-json",
+    "revision": "8733eeb377f951347033ab05f1135f0807602f60",
+    "path": "grammars/json.wasm",
+    "sha256": "c7468871e295e18ddfe8337d58d7324e77538d6f75736d34fb3b7d6e9d5b25fa"
+  }
+]
