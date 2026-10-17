@@ -1,5 +1,7 @@
 # Benchmark methodology
 
+The [ownership and re-entry review](ownership-review.md) records the follow-up GC and cursor fixes, expanded differential query checks, and both mixed-workload and isolated cursor measurements, including their variability.
+
 The [final standalone quality review](final-quality-review.md) records the field cursor leak fix, memory measurements, API boundary corrections and final performance controls against the previous package revision.
 
 The [pre-integration review](pre-integration-review.md) records a separate baseline/candidate comparison of parser construction, edit preparation, range validation and capture materialization, including remaining integration risks.
