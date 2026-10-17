@@ -4,6 +4,8 @@ Provides native Tree-sitter bindings with portable Wasm grammars.
 
 Fork of [tree-sitter/node-tree-sitter](https://github.com/tree-sitter/node-tree-sitter).
 
+Consumed through immutable GitHub commit pins. This package is not published to npm.
+
 ## Features
 
 - **Portable grammars**: loads Tree-sitter `.wasm` language modules through Wasmtime while keeping syntax trees native.
