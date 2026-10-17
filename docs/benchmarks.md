@@ -1,5 +1,7 @@
 # Benchmark methodology
 
+The [final standalone quality review](final-quality-review.md) records the field cursor leak fix, memory measurements, API boundary corrections and final performance controls against the previous package revision.
+
 The [pre-integration review](pre-integration-review.md) records a separate baseline/candidate comparison of parser construction, edit preparation, range validation and capture materialization, including remaining integration risks.
 
 The [predicate and node identity review](predicate-performance-review.md) compares ordered edit batches, quantified predicates and ordinary query/cursor controls. It records both the targeted improvements and the remaining cursor traversal regression, with no changes to the vendored Tree-sitter runtime.
