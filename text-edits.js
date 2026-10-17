@@ -89,4 +89,40 @@ class TextEdits {
   }
 }
 
-module.exports = { TextEdits, advanceText };
+function prepareOrdered(text, edits) {
+  const descending = edits.every((edit, i) => !i || edit.oldEndIndex <= edits[i - 1].startIndex);
+  const ascending =
+    !descending &&
+    edits.every((edit, i) => !i || edit.startIndex >= edits[i - 1].startIndex + edits[i - 1].newText.length);
+  if (!descending && !ascending) return null;
+  const changes = new Array(edits.length),
+    chunks = [];
+  let sourceOffset = 0,
+    delta = 0,
+    position = { row: 0, column: 0 };
+  for (let n = 0; n < edits.length; n++) {
+    const i = descending ? edits.length - n - 1 : n;
+    const edit = edits[i];
+    const originalStart = edit.startIndex - (descending ? 0 : delta);
+    const originalEnd = edit.oldEndIndex - (descending ? 0 : delta);
+    const startPosition = advanceText(text, sourceOffset, originalStart, position);
+    const oldEndPosition = advanceText(text, originalStart, originalEnd, startPosition);
+    const newEndPosition = advanceText(edit.newText, 0, edit.newText.length, startPosition);
+    changes[i] = {
+      startIndex: edit.startIndex,
+      oldEndIndex: edit.oldEndIndex,
+      newEndIndex: edit.startIndex + edit.newText.length,
+      startPosition,
+      oldEndPosition,
+      newEndPosition,
+    };
+    chunks.push(text.slice(sourceOffset, originalStart), edit.newText);
+    sourceOffset = originalEnd;
+    position = descending ? oldEndPosition : newEndPosition;
+    delta += edit.newText.length - (edit.oldEndIndex - edit.startIndex);
+  }
+  chunks.push(text.slice(sourceOffset));
+  return { changes, text: chunks.join("") };
+}
+
+module.exports = { TextEdits, advanceText, prepareOrdered };

@@ -53,7 +53,7 @@ Tree::Tree(const Napi::CallbackInfo &info) : Napi::ObjectWrap<Tree>(info), tree_
 Tree::~Tree() {
   ts_tree_delete(tree_);
   for (auto &entry : cached_nodes_) {
-    entry.second->tree = nullptr;
+    for (auto *cached = entry.second; cached; cached = cached->next) cached->tree = nullptr;
   }
 }
 
@@ -111,28 +111,37 @@ Napi::Value Tree::Edit(const Napi::CallbackInfo &info) {
   generation_++;
 
   for (auto &entry : cached_nodes_) {
-    Object js_node = entry.second->node.Value();
-    if (js_node.IsEmpty()) {
-      continue;
-    }
-    TSNode node{};
-    node.tree = tree_;
-    node.id = entry.first;
-    for (unsigned i = 0; i < 4; i++) {
-      Napi::Value node_field = js_node[i + 2];
-      if (node_field.IsNumber()) {
-        node.context[i] = node_field.As<Number>().Uint32Value();
+    for (auto *cached = entry.second; cached; cached = cached->next) {
+      Object js_node = cached->node.Value();
+      if (js_node.IsEmpty()) continue;
+      TSNode node{};
+      node.tree = tree_;
+      node.id = cached->key;
+      for (unsigned i = 0; i < 4; i++) node.context[i] = js_node.Get(i + 2U).As<Number>().Uint32Value();
+      ts_node_edit(&node, &edit);
+      for (unsigned i = 0; i < 4; i++) {
+        if (has_offset_views_) node_contexts_[cached][i] = node.context[i];
+        js_node[i + 2U] = Number::New(env, node.context[i]);
       }
-    }
-
-    ts_node_edit(&node, &edit);
-
-    for (unsigned i = 0; i < 4; i++) {
-      js_node[i + 2U] = Number::New(env, node.context[i]);
     }
   }
 
   return info.This();
+}
+
+Napi::Value Tree::CachedNode(const TSNode &node) const {
+  auto found = cached_nodes_.find(node.id);
+  if (found == cached_nodes_.end()) return Napi::Value();
+  if (!has_offset_views_) return found->second->node.Value();
+  const std::array<uint32_t, 4> context{node.context[0], node.context[1], node.context[2], node.context[3]};
+  for (auto *entry = found->second; entry; entry = entry->next) {
+    const auto saved = node_contexts_.find(entry);
+    if (saved != node_contexts_.end() && saved->second == context) {
+      auto value = entry->node.Value();
+      if (!value.IsEmpty()) return value;
+    }
+  }
+  return Napi::Value();
 }
 
 Napi::Value Tree::RootNode(const Napi::CallbackInfo &info) {
@@ -148,6 +157,18 @@ Napi::Value Tree::RootNodeWithOffset(const Napi::CallbackInfo &info) {
   read_number_from_js(&offset_extent.row, info[1], "offsetExtent.row");
   read_byte_count_from_js(&offset_extent.column, info[2], "offsetExtent.column");
 
+  if (offset_bytes == 0 && offset_extent.row == 0 && offset_extent.column == 0) return RootNode(info);
+  if (!has_offset_views_) {
+    has_offset_views_ = true;
+    for (auto &pair : cached_nodes_) {
+      for (auto *entry = pair.second; entry; entry = entry->next) {
+        auto value = entry->node.Value();
+        if (value.IsEmpty()) continue;
+        auto &context = node_contexts_[entry];
+        for (unsigned i = 0; i < 4; i++) context[i] = value.Get(i + 2U).As<Number>().Uint32Value();
+      }
+    }
+  }
   return node_methods::MarshalNode(info, this, ts_tree_root_node_with_offset(tree_, offset_bytes, offset_extent));
 }
 
@@ -156,6 +177,9 @@ Napi::Value Tree::GetChangedRanges(const Napi::CallbackInfo &info) {
   const Tree *other_tree = UnwrapTree(info[0]);
   if (other_tree == nullptr) {
     throw TypeError::New(env, "Argument must be a tree");
+  }
+  if (ts_tree_language(tree_) != ts_tree_language(other_tree->tree_)) {
+    throw TypeError::New(env, "Changed ranges require trees from the same language");
   }
 
   uint32_t range_count;
@@ -261,30 +285,51 @@ void FinalizeNode(Napi::Env _env, Tree::NodeCacheEntry *cache_entry) {
   assert(!cache_entry->node.IsEmpty());
   cache_entry->node.Reset();
   if (cache_entry->tree != nullptr) {
-    assert(cache_entry->tree->cached_nodes_.count(cache_entry->key));
-    cache_entry->tree->cached_nodes_.erase(cache_entry->key);
+    cache_entry->tree->node_contexts_.erase(cache_entry);
+    auto &cache = cache_entry->tree->cached_nodes_;
+    auto found = cache.find(cache_entry->key);
+    if (found != cache.end()) {
+      auto **link = &found->second;
+      while (*link && *link != cache_entry) link = &(*link)->next;
+      if (*link) *link = cache_entry->next;
+      if (!found->second) cache.erase(found);
+    }
   }
   delete cache_entry;
 }
 
-void CacheNodeForTree(Tree *tree, Napi::Env _env, Object js_node) {
-  Value js_node_field1 = js_node[0U];
-  Value js_node_field2 = js_node[1U];
-  if (!js_node_field1.IsNumber() || !js_node_field2.IsNumber()) {
-    return;
+const uint32_t *TransferredFields(Napi::Env env, uint32_t offset) {
+  auto *data = env.GetInstanceData<AddonData>();
+  if (offset > data->transfer_buffer_length || data->transfer_buffer_length - offset < 6) {
+    throw RangeError::New(env, "Invalid transferred node offset");
   }
-  uint32_t key_parts[2] = {
-    js_node_field1.As<Number>().Uint32Value(),
-    js_node_field2.As<Number>().Uint32Value(),
-  };
-  const void *key = UnmarshalNodeId(key_parts);
+  return data->transfer_buffer + offset;
+}
 
-  // A Node could have been garbage collected but the finalizer has not yet run to remove its cache entry
-  if (tree->cached_nodes_.count(key)) {
-    return;
+void CacheNodeForTree(Tree *tree, Napi::Env env, Object js_node, const uint32_t *fields = nullptr) {
+  uint32_t local_fields[6];
+  if (!fields) {
+    for (unsigned i = 0; i < 6; i++) {
+      auto value = js_node.Get(i);
+      if (!value.IsNumber()) return;
+      local_fields[i] = value.As<Number>().Uint32Value();
+    }
+    fields = local_fields;
   }
-
-  auto *cache_entry = new Tree::NodeCacheEntry{tree, key, {}};
+  const void *key = UnmarshalNodeId(fields);
+  const std::array<uint32_t, 4> context{fields[2], fields[3], fields[4], fields[5]};
+  auto found = tree->cached_nodes_.find(key);
+  auto *head = found == tree->cached_nodes_.end() ? nullptr : found->second;
+  if (head && !tree->has_offset_views_) return;
+  for (auto *entry = head; entry; entry = entry->next) {
+    // Preserve the original weak-cache policy: a collected wrapper may still
+    // have a pending finalizer. Let it unlink before caching its replacement.
+    // Recreating native weak references here adds avoidable post-GC churn.
+    auto saved = tree->node_contexts_.find(entry);
+    if (saved != tree->node_contexts_.end() && saved->second == context) return;
+  }
+  auto *cache_entry = new Tree::NodeCacheEntry{tree, key, {}, head};
+  if (tree->has_offset_views_) tree->node_contexts_[cache_entry] = context;
   cache_entry->node = Napi::Weak(js_node);
   js_node.AddFinalizer(&FinalizeNode, cache_entry);
 
@@ -300,7 +345,8 @@ Napi::Value Tree::CacheNode(const Napi::CallbackInfo &info) {
     throw TypeError::New(env, "not an object");
   }
 
-  CacheNodeForTree(this, env, info[0].As<Object>());
+  const uint32_t *fields = info[1].IsUndefined() ? nullptr : TransferredFields(env, UnsignedInteger(info[1], UINT32_MAX, "Node offset"));
+  CacheNodeForTree(this, env, info[0].As<Object>(), fields);
   return env.Undefined();
 }
 
@@ -312,13 +358,20 @@ Napi::Value Tree::CacheNodes(const Napi::CallbackInfo &info) {
   }
   auto js_nodes = info[0].As<Array>();
   uint32_t length = js_nodes.Length();
+  const uint32_t *offsets = nullptr;
+  if (!info[1].IsUndefined()) {
+    if (!info[1].IsTypedArray() || info[1].As<TypedArray>().TypedArrayType() != napi_uint32_array || info[1].As<Uint32Array>().ElementLength() != length) {
+      throw TypeError::New(env, "Expected one transferred offset per node");
+    }
+    offsets = info[1].As<Uint32Array>().Data();
+  }
 
   for (uint32_t i = 0; i < length; ++i) {
     Napi::Value js_node = js_nodes[i];
     if (!js_node.IsObject()) {
       throw TypeError::New(env, "not an object");
     }
-    CacheNodeForTree(this, env, js_node.As<Object>());
+    CacheNodeForTree(this, env, js_node.As<Object>(), offsets ? TransferredFields(env, offsets[i]) : nullptr);
   }
 
   return env.Undefined();

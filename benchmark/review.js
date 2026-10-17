@@ -58,7 +58,7 @@ async function main() {
     console.log(
       JSON.stringify(
         {
-          date: "2026-10-17",
+          recordedAt: new Date().toISOString(),
           runtime: process.versions,
           platform: process.platform,
           arch: process.arch,

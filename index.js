@@ -5,6 +5,7 @@ const binding = typeof process.versions.bun === "string" ?
 const {Query, Parser, NodeMethods, Tree, TreeCursor, LookaheadIterator} = binding;
 
 const util = require('util');
+const immutableSnapshots = new WeakSet();
 
 /*
  * Tree
@@ -722,12 +723,16 @@ Query.prototype.captures = function(
   const nodes = unmarshalNodes(returnedNodes, node.tree);
   const results = [];
 
+  const inputDescriptor = Object.getOwnPropertyDescriptor(node.tree, "input");
+  const stableText = immutableSnapshots.has(node.tree) || (typeof inputDescriptor?.value === "string" && node.tree.getText === getTextFromString);
+  let previousContext, previousAccepted;
   let i = 0
   let nodeIndex = 0;
   while (i < returnedMatches.length) {
     const patternIndex = returnedMatches[i++];
     const captureIndex = returnedMatches[i++];
-    const captures = [];
+    const contextKind = returnedMatches[i++];
+    const captures = contextKind === 2 ? previousContext : [];
 
     while (i < returnedMatches.length && typeof returnedMatches[i] === 'string') {
       const captureName = returnedMatches[i++];
@@ -737,8 +742,11 @@ Query.prototype.captures = function(
       })
     }
 
-    if (this.predicates[patternIndex].every(p => p(captures))) {
-      const result = captures[captureIndex];
+    const accepted = contextKind === 2 && stableText
+      ? previousAccepted : this.predicates[patternIndex].every(p => p(captures));
+    if (contextKind === 1) { previousContext = captures; previousAccepted = accepted; }
+    if (accepted) {
+      const result = contextKind === 0 ? captures[captureIndex] : {...captures[captureIndex]};
       const setProperties = this.setProperties[patternIndex];
       const assertedProperties = this.assertedProperties[patternIndex];
       const refutedProperties = this.refutedProperties[patternIndex];
@@ -808,7 +816,7 @@ function getID(buffer, offset) {
   return (high << 32n) + low;
 }
 
-function unmarshalNode(value, tree, offset = 0, cache = null) {
+function unmarshalNode(value, tree, offset = 0, cache = null, created = null, offsets = null) {
   /* case 1: node from the tree cache */
   if (typeof value === 'object') {
     const node = value;
@@ -828,7 +836,9 @@ function unmarshalNode(value, tree, offset = 0, cache = null) {
   }
 
   let cachedResult;
-  if (cache && (cachedResult = cache.get(id)))
+  if (cache && (cachedResult = cache.get(id)) &&
+      cachedResult[2] === nodeTransferArray[offset + 2] && cachedResult[3] === nodeTransferArray[offset + 3] &&
+      cachedResult[4] === nodeTransferArray[offset + 4] && cachedResult[5] === nodeTransferArray[offset + 5])
     return cachedResult;
 
   const result = new NodeClass(tree);
@@ -836,27 +846,31 @@ function unmarshalNode(value, tree, offset = 0, cache = null) {
     result[i] = nodeTransferArray[offset + i];
   }
 
-  if (cache)
+  if (cache) {
     cache.set(id, result);
-  else
-    tree._cacheNode(result);
+    created.push(result);
+    offsets.push(offset);
+  } else {
+    tree._cacheNode(result, offset);
+  }
 
   return result;
 }
 
 function unmarshalNodes(nodes, tree) {
   const cache = new Map();
+  const created = [], offsets = [];
 
   let offset = 0;
   for (let i = 0, {length} = nodes; i < length; i++) {
-    const node = unmarshalNode(nodes[i], tree, offset, cache);
+    const node = unmarshalNode(nodes[i], tree, offset, cache, created, offsets);
     if (node !== nodes[i]) {
       nodes[i] = node;
       offset += NODE_FIELD_COUNT
     }
   }
 
-  tree._cacheNodes(Array.from(cache.values()));
+  tree._cacheNodes(created, Uint32Array.from(offsets));
 
   return nodes;
 }
@@ -938,9 +952,13 @@ function initializeLanguageNodeClasses(language) {
       }
     }
 
-    nodeSubclasses[id] = new Function('SyntaxNode', `
-      return class ${camelCase(typeName, true)}Node extends SyntaxNode {}
-    `)(SyntaxNode);
+    // Grammar names are untrusted data, including names loaded from Wasm.
+    // Keep display names without compiling them as JavaScript source.
+    nodeSubclasses[id] = class extends SyntaxNode {};
+    Object.defineProperty(nodeSubclasses[id], 'name', {
+      value: `${camelCase(typeName, true)}Node`,
+      configurable: true,
+    });
 
     Object.defineProperties(nodeSubclasses[id].prototype, {
       type: {
@@ -961,7 +979,7 @@ function initializeLanguageNodeClasses(language) {
 
 function camelCase(name, upperCase) {
   name = name.replace(/_(\w)/g, (_match, letter) => letter.toUpperCase());
-  if (upperCase) name = name[0].toUpperCase() + name.slice(1);
+  if (upperCase) name = (name[0] ?? '').toUpperCase() + name.slice(1);
   return name;
 }
 
@@ -977,4 +995,4 @@ module.exports.loadLanguage = async (name, bytes) => {
   initializeLanguageNodeClasses(language);
   return language;
 };
-module.exports.BackgroundParser = require('./background-parser')(binding.BackgroundParser);
+module.exports.BackgroundParser = require('./background-parser')(binding.BackgroundParser, tree => immutableSnapshots.add(tree));

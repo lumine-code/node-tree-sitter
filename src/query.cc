@@ -5,6 +5,7 @@
 #include "./conversions.h"
 #include <memory>
 #include <cmath>
+#include <cstring>
 
 #include <napi.h>
 #include <string>
@@ -83,6 +84,7 @@ Query::Query(const Napi::CallbackInfo &info) : Napi::ObjectWrap<Query>(info) , q
   Value().TypeTag(&QUERY_TYPE_TAG);
 
   const TSLanguage *language = language_methods::UnwrapLanguage(info[0]);
+  language_ = language;
   const char *source;
   uint32_t source_len;
   uint32_t error_offset = 0;
@@ -248,6 +250,7 @@ Napi::Value Query::Matches(const Napi::CallbackInfo &info) {
     throw Error::New(env, "Missing argument tree");
   }
 
+  if (ts_tree_language(tree->tree_) != language_) throw TypeError::New(env, "Query and tree must use the same language");
   TreeReadGuard reading(tree);
   TSQuery *ts_query = query->query_;
   TSNode root_node = node_methods::UnmarshalNode(env, tree);
@@ -358,6 +361,7 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
     throw Error::New(env, "Missing argument tree");
   }
 
+  if (ts_tree_language(tree->tree_) != language_) throw TypeError::New(env, "Query and tree must use the same language");
   TreeReadGuard reading(tree);
   TSQuery *ts_query = query->query_;
   TSNode root_node = node_methods::UnmarshalNode(env, tree);
@@ -390,6 +394,9 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
     }
   }
 
+  std::vector<TSQueryCapture> previous_context;
+  uint32_t previous_match = UINT32_MAX, previous_pattern = UINT32_MAX;
+
   while (ts_query_cursor_next_capture(
     cursor,
     &match,
@@ -399,6 +406,26 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
     js_matches[index++] = Number::New(env, match.pattern_index);
     const bool context = needs_context[match.pattern_index];
     js_matches[index++] = Number::New(env, context ? capture_index : 0);
+    bool reuse = context && previous_match == match.id && previous_pattern == match.pattern_index && previous_context.size() == match.capture_count;
+    if (reuse) {
+      for (uint32_t i = 0; i < match.capture_count; i++) {
+        const auto &before = previous_context[i];
+        const auto &after = match.captures[i];
+        if (before.index != after.index || before.node.id != after.node.id ||
+            std::memcmp(before.node.context, after.node.context, sizeof(before.node.context)) != 0) {
+          reuse = false;
+          break;
+        }
+      }
+    }
+    // 0: emitted capture only; 1: complete context; 2: reuse last complete context.
+    js_matches[index++] = Number::New(env, context ? (reuse ? 2 : 1) : 0);
+    if (reuse) continue;
+    if (context) {
+      previous_context.assign(match.captures, match.captures + match.capture_count);
+      previous_match = match.id;
+      previous_pattern = match.pattern_index;
+    }
 
     // Predicateless patterns only need the emitted capture. Repeating the entire
     // match per capture creates quadratic JS arrays for quantified patterns.

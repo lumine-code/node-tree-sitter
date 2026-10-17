@@ -18,6 +18,7 @@ class Query final : public Napi::ObjectWrap<Query> {
 
  private:
   TSQuery *query_;
+  const TSLanguage *language_ = nullptr; // Retained by query_.
   uint32_t last_match_limit_ = UINT32_MAX;
   bool last_exceeded_match_limit_ = false;
   bool executing_ = false;

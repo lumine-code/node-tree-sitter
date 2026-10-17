@@ -1,5 +1,5 @@
 const MAX_INDEX = Math.floor(0xffffffff / 2);
-const { TextEdits, advanceText } = require("./text-edits");
+const { TextEdits, advanceText, prepareOrdered } = require("./text-edits");
 
 function index(value, name, maximum = MAX_INDEX) {
   if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
@@ -43,21 +43,28 @@ function preparePrevious(previous, edits, text, language) {
     });
     return copy;
   }
-  const source = new TextEdits(previous.input);
-  const changes = [];
+  const normalized = [];
+  let length = previous.input.length;
   for (const edit of edits) {
-    index(edit.startIndex, "startIndex", source.length);
-    index(edit.oldEndIndex, "oldEndIndex", source.length);
-    if (edit.oldEndIndex < edit.startIndex || typeof edit.newText !== "string") {
+    const { startIndex, oldEndIndex, newText } = edit;
+    index(startIndex, "startIndex", length);
+    index(oldEndIndex, "oldEndIndex", length);
+    if (oldEndIndex < startIndex || typeof newText !== "string") {
       throw new TypeError("An edit requires ordered indices and string newText");
     }
-    index(source.length + edit.newText.length - (edit.oldEndIndex - edit.startIndex), "edited text length");
-    changes.push(source.replace(edit.startIndex, edit.oldEndIndex, edit.newText));
+    length += newText.length - (oldEndIndex - startIndex);
+    index(length, "edited text length");
+    normalized.push({ startIndex, oldEndIndex, newText });
   }
-  if (source.getText() !== text)
-    throw new Error("edits do not transform the previous snapshot into the requested text");
+  let prepared = prepareOrdered(previous.input, normalized);
+  if (!prepared) {
+    const source = new TextEdits(previous.input);
+    const changes = normalized.map((edit) => source.replace(edit.startIndex, edit.oldEndIndex, edit.newText));
+    prepared = { changes, text: source.getText() };
+  }
+  if (prepared.text !== text) throw new Error("edits do not transform the previous snapshot into the requested text");
   const copy = previous.copy();
-  for (const change of changes) copy.edit(change);
+  for (const change of prepared.changes) copy.edit(change);
   return copy;
 }
 
@@ -87,7 +94,7 @@ function validateRanges(ranges, text) {
   }
 }
 
-module.exports = (NativeParser) =>
+module.exports = (NativeParser, published = () => {}) =>
   class BackgroundParser {
     #native;
     #language;
@@ -130,6 +137,7 @@ module.exports = (NativeParser) =>
             },
           },
         });
+        published(tree);
         return tree;
       } finally {
         this.#busy = false;

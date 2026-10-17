@@ -241,6 +241,7 @@ Napi::Value Parser::Parse(const CallbackInfo &info) {
     if (tree == nullptr) {
       throw TypeError::New(env, "Second argument must be a tree");
     }
+    if (ts_tree_language(tree->tree_) != ts_parser_language(parser_)) throw TypeError::New(env, "Previous tree belongs to a different language");
     old_tree = tree->tree_;
     old_tree_owner = tree;
   }
