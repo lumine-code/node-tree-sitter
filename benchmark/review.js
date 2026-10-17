@@ -9,7 +9,10 @@ const warmups = 2;
 const summary = (values) => {
   const sorted = [...values].sort((a, b) => a - b);
   return {
-    medianMs: sorted[Math.floor(sorted.length / 2)],
+    medianMs:
+      sorted.length % 2
+        ? sorted[Math.floor(sorted.length / 2)]
+        : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2,
     p95Ms: sorted[Math.ceil(sorted.length * 0.95) - 1],
     samples: values,
   };
