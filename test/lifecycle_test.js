@@ -17,6 +17,164 @@ const emptyEdit = {
   newEndPosition: { row: 0, column: 0 },
 };
 
+async function collectReferences(refs) {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    global.gc();
+    if (refs.every((ref) => ref.deref() === undefined)) return;
+  }
+  assert.equal(refs.filter((ref) => ref.deref() !== undefined).length, 0, "unreachable owners must be collectable");
+}
+
+test("logger closures referring to their parser do not root an unreachable cycle", { skip: !global.gc }, async () => {
+  const refs = (() => {
+    const result = [];
+    for (let i = 0; i < 20; i++) {
+      const p = parser();
+      const callback = () => p.getLanguage();
+      p.setLogger(callback);
+      p.parse("x;");
+      result.push(new WeakRef(p), new WeakRef(callback));
+    }
+    return result;
+  })();
+  await collectReferences(refs);
+});
+
+test(
+  "a live parser retains its logger and releases replaced and disabled callbacks",
+  { skip: !global.gc },
+  async () => {
+    const p = parser();
+    let calls = 0;
+    const install = () => {
+      const callback = () => {
+        assert.equal(p.getLanguage(), language);
+        calls++;
+      };
+      p.setLogger(callback);
+      return new WeakRef(callback);
+    };
+    const first = install();
+    await new Promise((resolve) => setImmediate(resolve));
+    global.gc();
+    assert.equal(p.getLogger(), first.deref());
+    assert.throws(() => p.setLogger({}), /Logger callback/);
+    p.parse("x;");
+    assert.ok(calls > 0);
+    const second = install();
+    await collectReferences([first]);
+    const before = calls;
+    p.parse("y;");
+    assert.ok(calls > before);
+    p.setLogger(null);
+    await collectReferences([second]);
+    assert.equal(p.getLogger(), null);
+    assert.equal(p.parse("z;").rootNode.text, "z;");
+  },
+);
+
+test("trees storing their own cursors are collectable, including reset and resetTo", { skip: !global.gc }, async () => {
+  const refs = (() => {
+    const result = [];
+    for (const method of ["walk", "reset", "resetTo"]) {
+      const tree = parser().parse("retained;");
+      const cursor = method === "walk" ? tree.walk() : parser().parse("old;").walk();
+      if (method === "reset") cursor.reset(tree.rootNode);
+      if (method === "resetTo") cursor.resetTo(tree.walk());
+      tree.cursor = cursor;
+      result.push(new WeakRef(tree), new WeakRef(cursor));
+    }
+    return result;
+  })();
+  await collectReferences(refs);
+});
+
+test("cursor reset adopts the target native tree across languages and after GC", { skip: !global.gc }, async () => {
+  const fixtures = {
+    javascript: "call(x);",
+    python: "def f(x):\n  return x\n",
+    json: '{"key":[1,2]}',
+    html: "<main><b>text</b></main>",
+  };
+  const initial = (() => {
+    const tree = parser().parse("old;");
+    return { cursor: tree.walk(), ref: new WeakRef(tree) };
+  })();
+  const cursor = initial.cursor;
+  const dump = (cursor) => {
+    const result = [];
+    do {
+      const node = cursor.currentNode;
+      assert.equal(cursor.nodeType, node.type);
+      assert.equal(cursor.nodeTypeId, node.typeId);
+      assert.equal(node.tree, cursor.tree);
+      result.push([cursor.nodeType, cursor.startIndex, cursor.endIndex, cursor.currentFieldName, cursor.nodeStateId]);
+    } while (cursor.gotoNextSibling());
+    return result;
+  };
+  for (const [name, text] of Object.entries(fixtures)) {
+    const lang = await Parser.loadLanguage(name, fs.readFileSync(path.join(__dirname, "fixtures", `${name}.wasm`)));
+    const tree = new Parser().setLanguage(lang).parse(text);
+    cursor.reset(tree.rootNode);
+    const expected = tree.walk();
+    assert.equal(cursor.tree, tree);
+    assert.deepEqual(dump(cursor), dump(expected));
+    assert.equal(cursor.gotoFirstChild(), expected.gotoFirstChild());
+    await new Promise((resolve) => setImmediate(resolve));
+    global.gc();
+    assert.deepEqual(dump(cursor), dump(expected));
+    cursor.reset(tree.rootNode.firstNamedChild);
+    assert.equal(cursor.nodeType, tree.rootNode.firstNamedChild.type);
+    assert.equal(cursor.gotoParent(), false);
+  }
+  await collectReferences([initial.ref]);
+});
+
+test("node search argument getters cannot edit the tree during native reads", () => {
+  const tree = parser().parse("call(x);");
+  const root = tree.rootNode;
+  const position = {
+    get row() {
+      tree.edit(emptyEdit);
+      return 0;
+    },
+    column: 1,
+  };
+  for (const method of ["descendantForPosition", "namedDescendantForPosition"]) {
+    assert.throws(() => root[method](position), /reading/);
+  }
+  const types = [];
+  Object.defineProperty(types, 0, {
+    get() {
+      tree.edit(emptyEdit);
+      return "identifier";
+    },
+  });
+  assert.throws(() => root.descendantsOfType(types), /reading/);
+  assert.throws(() => root.firstNamedChild.closest(types), /reading/);
+  assert.doesNotThrow(() => tree.edit(emptyEdit));
+  assert.equal(root.descendantsOfType("identifier").length, 2);
+});
+
+test("cursor search rechecks its generation after point getters", () => {
+  const tree = parser().parse("a; b;");
+  const cursor = tree.walk();
+  assert.throws(
+    () =>
+      cursor.gotoFirstChildForPosition({
+        get row() {
+          tree.edit(emptyEdit);
+          return 0;
+        },
+        column: 0,
+      }),
+    /Tree changed/,
+  );
+  cursor.reset(tree.rootNode);
+  assert.equal(cursor.gotoFirstChildForPosition({ row: 0, column: 0 }), 0);
+});
+
 test("callback text reads stop at empty or missing input without inventing text", () => {
   for (const end of ["", null, undefined]) {
     let mode = "parse",

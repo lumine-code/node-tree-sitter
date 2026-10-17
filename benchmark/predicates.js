@@ -4,6 +4,15 @@ const { spawnSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const samples = Number(process.env.BENCH_SAMPLES || 7),
   warmups = 2;
+const caseFilter = process.env.BENCH_CASE;
+if (
+  caseFilter &&
+  !["ascending5000", "descending5000", "predicate512", "snapshotPredicate512", "simple20000", "cursorWalk"].includes(
+    caseFilter,
+  )
+) {
+  throw new Error("Unknown BENCH_CASE");
+}
 const hash = (text) => crypto.createHash("sha256").update(text).digest("hex");
 const statistics = (samples) => {
   const sorted = [...samples].sort((a, b) => a - b),
@@ -58,6 +67,7 @@ async function main() {
           samples,
           warmups,
           order: "ABBAABBA",
+          caseFilter: caseFilter || null,
           comparison,
           runs,
         },
@@ -92,6 +102,9 @@ async function main() {
   const metrics = {},
     checks = [];
   async function measure(name, operation, submission = false) {
+    // Keep correctness checks for every workload, but isolate timing when
+    // investigating a noisy result from the complete mixed-workload run.
+    if (caseFilter && caseFilter !== name) return operation();
     const values = [];
     let result;
     for (let i = 0; i < samples + warmups; i++) {

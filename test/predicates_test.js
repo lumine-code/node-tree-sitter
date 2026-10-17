@@ -20,6 +20,94 @@ const point = (text, index) => {
 const captureValues = (values) =>
   values.map((c) => [c.name, c.node.startIndex, c.node.endIndex, c.node.text, c.setProperties]);
 
+test("low query match limits remain independent of earlier executions", () => {
+  const tree = makeParser().parse("[1];");
+  const query = new P.Query(language, "(array (number)* @n)\n(number) @plain");
+  for (const method of ["captures", "matches"]) {
+    const limited = query[method](tree.rootNode, { matchLimit: 1 });
+    assert.equal(limited.length, 1);
+    assert.equal(query.didExceedMatchLimit(), true);
+    assert.equal(query[method](tree.rootNode).length, 2);
+    assert.equal(query.didExceedMatchLimit(), false);
+    assert.deepEqual(query[method](tree.rootNode, { matchLimit: 1 }), limited);
+    assert.equal(query.didExceedMatchLimit(), true);
+    assert.equal(query.matchLimit, 1);
+  }
+});
+
+test("query results agree with web across optional captures, disabling and bounded searches", () => {
+  const native = makeParser();
+  const web = new Web.Parser();
+  web.setLanguage(webLanguage);
+  const predicates = [
+    '#eq? @n "1"',
+    '#not-eq? @n "1"',
+    '#any-eq? @n "1"',
+    '#any-not-eq? @n "1"',
+    '#match? @n "^[12]$"',
+    '#not-match? @n "^1$"',
+    '#any-match? @n "^1$"',
+    '#any-not-match? @n "^1$"',
+    '#any-of? @n "1" "2"',
+    '#not-any-of? @n "1" "2"',
+    "#eq? @n @n",
+    "#any-not-eq? @n @n",
+  ];
+  try {
+    for (const text of ["[];", "[1];", "[1,2,1];", "[3,2]; [1,1];"]) {
+      const tree = native.parse(text),
+        webTree = web.parse(text);
+      try {
+        for (const predicate of predicates) {
+          const source = `((array (number)* @n) (${predicate}) (#set! role "number"))\n(number) @plain`;
+          const q = new P.Query(language, source),
+            wq = new Web.Query(webLanguage, source);
+          try {
+            for (const mode of ["normal", "disable-pattern", "disable-capture"]) {
+              if (mode === "disable-pattern") {
+                q.disablePattern(1);
+                wq.disablePattern(1);
+              }
+              if (mode === "disable-capture") {
+                q.disableCapture("n");
+                wq.disableCapture("n");
+              }
+              for (const options of [
+                {},
+                // web-tree-sitter 0.27.1 passes numeric bounds as bytes. Point
+                // bounds provide the same UTF-16 region in both backends.
+                { startPosition: { row: 0, column: 1 }, endPosition: { row: 0, column: text.length - 1 } },
+                { maxStartDepth: 0 },
+                { matchLimit: 16 },
+              ]) {
+                const label = `${text}: ${predicate}: ${mode}: ${JSON.stringify(options)}`;
+                assert.deepEqual(
+                  captureValues(q.captures(tree.rootNode, options)),
+                  captureValues(wq.captures(webTree.rootNode, options)),
+                  label,
+                );
+                const normalize = (values) =>
+                  values.map((m) => [m.pattern ?? m.patternIndex, captureValues(m.captures), m.setProperties]);
+                assert.deepEqual(
+                  normalize(q.matches(tree.rootNode, options)),
+                  normalize(wq.matches(webTree.rootNode, options)),
+                  label,
+                );
+              }
+            }
+          } finally {
+            wq.delete();
+          }
+        }
+      } finally {
+        webTree.delete();
+      }
+    }
+  } finally {
+    web.delete();
+  }
+});
+
 test("Wasm node type names remain data and cannot execute host JavaScript", async () => {
   const bytes = fs.readFileSync(path.join(__dirname, "fixtures/javascript.wasm"));
   const original = Buffer.from("generator_function_declaration");

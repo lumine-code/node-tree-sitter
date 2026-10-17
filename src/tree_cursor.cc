@@ -72,7 +72,8 @@ TreeCursor::~TreeCursor() { ts_tree_cursor_delete(&cursor_); }
 void TreeCursor::AdoptTree(Napi::Object tree) {
   tree_ = Tree::UnwrapTree(tree);
   if (!tree_) throw TypeError::New(tree.Env(), "Expected a tree");
-  owner_.Reset(tree, 1);
+  tree.Env().GetInstanceData<AddonData>()->RetainDependency(Value(), tree);
+  owner_.Reset(tree, 0);
   generation_ = tree_->generation_;
 }
 
@@ -145,6 +146,7 @@ Napi::Value TreeCursor::GotoFirstChildForPosition(const Napi::CallbackInfo &info
   if (goal_point.IsNothing()) {
     throw TypeError::New(env, "First argument must be a Point object");
   }
+  CheckGeneration(info.Env());
   int64_t child_index = ts_tree_cursor_goto_first_child_for_point(&cursor_, goal_point.Unwrap());
   if (child_index < 0) {
     return env.Null();
@@ -174,7 +176,7 @@ Napi::Value TreeCursor::CurrentNode(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value TreeCursor::Reset(const Napi::CallbackInfo &info) {
-  const Tree *tree = Tree::UnwrapTree(info.This().As<Object>()["tree"]);
+  const Tree *tree = Tree::UnwrapTree(info[0]);
   TSNode node = node_methods::UnmarshalNode(info.Env(), tree);
   ts_tree_cursor_reset(&cursor_, node);
   AdoptTree(info[0].As<Object>());

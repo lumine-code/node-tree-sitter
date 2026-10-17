@@ -68,7 +68,7 @@ void Logger::LogImpl(void *payload, TSLogType type, const char *message_str) {
 TSLogger Logger::Make(const Napi::Function &func) {
   TSLogger result;
   auto *logger = new Logger();
-  logger->func = Napi::Persistent(func);
+  logger->func = Napi::Weak(func);
   result.payload = static_cast<void *>(logger);
   result.log = Log;
   return result;

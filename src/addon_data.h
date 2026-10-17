@@ -10,7 +10,17 @@ namespace node_tree_sitter {
 
 class AddonData final {
 public:
-  explicit AddonData(Napi::Env _env) {}
+  explicit AddonData(Napi::Env env) {
+    auto map = env.Global().Get("WeakMap").As<Napi::Function>().New({});
+    ownership = Napi::Persistent(map);
+    ownership_set = Napi::Persistent(map.Get("set").As<Napi::Function>());
+  }
+
+  // Trace each wrapper's one adopted dependency through V8, so a dependency
+  // referring back to its owner does not form a permanent native root cycle.
+  void RetainDependency(Napi::Object owner, Napi::Value dependency) {
+    ownership_set.Call(ownership.Value(), {owner, dependency});
+  }
 
   ~AddonData() {
     ts_tree_cursor_delete(&scratch_cursor);
@@ -43,6 +53,10 @@ public:
 
   // lookaheaditerator
   Napi::FunctionReference lookahead_iterator_constructor;
+
+private:
+  Napi::ObjectReference ownership;
+  Napi::FunctionReference ownership_set;
 };
 
 } // namespace node_tree_sitter

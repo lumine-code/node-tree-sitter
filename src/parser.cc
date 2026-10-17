@@ -311,11 +311,13 @@ Napi::Value Parser::SetLogger(const Napi::CallbackInfo &info) {
   TSLogger current_logger = ts_parser_logger(parser_);
 
   if (info[0].IsFunction()) {
+    info.Env().GetInstanceData<AddonData>()->RetainDependency(info.This().As<Object>(), info[0]);
     if (current_logger.payload != nullptr) {
       delete static_cast<Logger *>(current_logger.payload);
     }
     ts_parser_set_logger(parser_, Logger::Make(info[0].As<Function>()));
   } else if (info[0].IsEmpty() || info[0].IsUndefined() || info[0].IsNull() || (info[0].IsBoolean() && !info[0].As<Boolean>())) {
+    info.Env().GetInstanceData<AddonData>()->RetainDependency(info.This().As<Object>(), info.Env().Null());
     if (current_logger.payload != nullptr) {
       delete static_cast<Logger *>(current_logger.payload);
     }

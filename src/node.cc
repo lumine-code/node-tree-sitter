@@ -257,6 +257,7 @@ Napi::Value DescendantForIndex(const Napi::CallbackInfo &info) {
 Napi::Value NamedDescendantForPosition(const Napi::CallbackInfo &info) {
   Env env = info.Env();
   const Tree *tree = Tree::UnwrapTree(info[0]);
+  TreeReadGuard reading(tree);
   TSNode node = UnmarshalNode(env, tree);
 
   if (node.id != nullptr) {
@@ -274,6 +275,7 @@ Napi::Value NamedDescendantForPosition(const Napi::CallbackInfo &info) {
 Napi::Value DescendantForPosition(const Napi::CallbackInfo &info) {
   Env env = info.Env();
   const Tree *tree = Tree::UnwrapTree(info[0]);
+  TreeReadGuard reading(tree);
   TSNode node = UnmarshalNode(env, tree);
 
   if (node.id != nullptr) {
@@ -813,6 +815,7 @@ Napi::Value DescendantsOfType(const Napi::CallbackInfo &info) {
   Env env = info.Env();
   auto* data = env.GetInstanceData<AddonData>();
   const Tree *tree = Tree::UnwrapTree(info[0]);
+  TreeReadGuard reading(tree);
   TSNode node = UnmarshalNode(env, tree);
   if (node.id == nullptr) {
     return env.Undefined();
@@ -939,6 +942,7 @@ Napi::Value ChildNodeForFieldId(const Napi::CallbackInfo &info) {
 Napi::Value Closest(const Napi::CallbackInfo &info) {
   Env env = info.Env();
   const Tree *tree = Tree::UnwrapTree(info[0]);
+  TreeReadGuard reading(tree);
   TSNode node = UnmarshalNode(env, tree);
   if (node.id == nullptr) {
     return env.Undefined();
