@@ -2,6 +2,8 @@
 
 The [pre-integration review](pre-integration-review.md) records a separate baseline/candidate comparison of parser construction, edit preparation, range validation and capture materialization, including remaining integration risks.
 
+The [predicate and node identity review](predicate-performance-review.md) compares ordered edit batches, quantified predicates and ordinary query/cursor controls. It records both the targeted improvements and the remaining cursor traversal regression, with no changes to the vendored Tree-sitter runtime.
+
 Run `node benchmark/wasm.js` on an otherwise idle machine. Each backend runs in a fresh process with the same committed JavaScript Wasm fixture and generated source. The default is 10,000 lines, two warmups and ten measured samples. Results include raw samples, medians, p95, runtime versions and structural checksums. Compare multiple complete runs with reversed or randomized backend order before making a performance claim; the default runner uses a fixed order and is an exploratory benchmark.
 
 Initial parse duration includes synchronous submission and awaiting completion. Submission time measures how long `parse()` occupies the calling thread before returning a tree or promise. Incremental duration includes copying/editing the previous tree, validating changes in the background API and producing the updated tree. The two synchronous backends mutate their prior tree as required by their API; the background backend preserves its published snapshot. All backends parse the same text and the final tree checksums must agree.
