@@ -38,6 +38,8 @@ To repeat the comparison, preserve the baseline package's JavaScript files and i
 
 ## Integration decisions still required
 
+A follow-up lifecycle review added further guards without changing the integration scope. Public cursors now retain their tree natively, track its edit generation and reject stale traversal until reset. Descendant indices are bounded by the cursor's subtree. Lookahead states, edits, included ranges and query options reject truncating numeric conversions. Both synchronous parser and query range setters check the native return value, preventing invalid ranges from silently retaining or selecting a whole-document range. Callback-backed node text reads stop at missing input and advance the supplied UTF-16 position correctly. These changes have dedicated regression and forced-GC tests; they do not close the integration gaps below.
+
 The binding is ready for an isolated integration prototype, not a drop-in replacement for Lumine's complete language mode. Full text strings are still copied into native memory on each request. A future host must supply or agree a native text-snapshot interface and measure submission costs on large documents.
 
 Parsing and Wasm compilation share Node's libuv worker pool with other work. A host must bound requests, prioritize the active buffer and account for filesystem/DNS contention, or implement a dedicated execution pool. The library currently rejects concurrent requests on one parser rather than coalescing revisions.

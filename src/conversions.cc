@@ -11,6 +11,16 @@ namespace node_tree_sitter {
 
 static const unsigned BYTES_PER_CHARACTER = 2;
 
+uint32_t UnsignedInteger(const Napi::Value &value, uint32_t maximum, const char *name, bool allow_infinity) {
+  if (!value.IsNumber()) throw TypeError::New(value.Env(), std::string(name) + " must be a number");
+  const double number = value.As<Number>().DoubleValue();
+  if (allow_infinity && number == INFINITY) return UINT32_MAX;
+  if (!std::isfinite(number) || std::floor(number) != number || number < 0 || number > maximum) {
+    throw RangeError::New(value.Env(), std::string(name) + " must be a nonnegative integer in range");
+  }
+  return static_cast<uint32_t>(number);
+}
+
 void InitConversions(Napi::Env env, Napi::Object exports) {
   auto *data = env.GetInstanceData<AddonData>();
 
@@ -60,13 +70,18 @@ Napi::Maybe<TSRange> RangeFromJS(const Napi::Value& arg) {
     } \
   }
 
-  INIT(start_point, "startPosition", PointFromJS);
-  INIT(end_point, "endPosition", PointFromJS);
+  auto range_point = [](const Napi::Value &point) { return PointFromJS(point, false); };
+  INIT(start_point, "startPosition", range_point);
+  INIT(end_point, "endPosition", range_point);
   INIT(start_byte, "startIndex", ByteCountFromJS);
   INIT(end_byte, "endIndex", ByteCountFromJS);
 
   #undef INIT
 
+  if (result.start_byte > result.end_byte || result.start_point.row > result.end_point.row ||
+      (result.start_point.row == result.end_point.row && result.start_point.column > result.end_point.column)) {
+    throw RangeError::New(env, "Range endpoints must be ordered");
+  }
   return Napi::Just(result);
 }
 
@@ -77,7 +92,7 @@ Napi::Object PointToJS(Napi::Env env, const TSPoint &point) {
   return result;
 }
 
-Napi::Maybe<TSPoint> PointFromJS(const Napi::Value& arg) {
+Napi::Maybe<TSPoint> PointFromJS(const Napi::Value& arg, bool allow_infinity) {
   Env env = arg.Env();
 
   if (!arg.IsObject()) {
@@ -86,37 +101,9 @@ Napi::Maybe<TSPoint> PointFromJS(const Napi::Value& arg) {
   }
   auto js_point = arg.As<Object>();
 
-  auto js_row = js_point.Get("row").As<Number>();
-  if (!js_row.IsNumber()) {
-    TypeError::New(env, "Point must be a {row, column} object").ThrowAsJavaScriptException();
-    return Napi::Nothing<TSPoint>();
-  }
-
-  auto js_column = js_point.Get("column").As<Number>();
-  if (!js_column.IsNumber()) {
-    TypeError::New(env, "Point must be a {row, column} object").ThrowAsJavaScriptException();
-    return Napi::Nothing<TSPoint>();
-  }
-
-  uint32_t row;
-  if (!std::isfinite(js_row.DoubleValue())) {
-    row = UINT32_MAX;
-  } else if (js_row.IsNumber()) {
-    row = js_row.Uint32Value();
-  } else {
-    TypeError::New(env, "Point.row must be a number").ThrowAsJavaScriptException();
-    return Napi::Nothing<TSPoint>();
-  }
-
-  uint32_t column;
-  if (!std::isfinite(js_column.DoubleValue())) {
-    column = UINT32_MAX;
-  } else if (js_column.IsNumber()) {
-    column = js_column.Uint32Value() * BYTES_PER_CHARACTER;
-  } else {
-    TypeError::New(env, "Point.column must be a number").ThrowAsJavaScriptException();
-    return Napi::Nothing<TSPoint>();
-  }
+  const uint32_t row = UnsignedInteger(js_point.Get("row"), UINT32_MAX, "Point.row", allow_infinity);
+  const uint32_t character_column = UnsignedInteger(js_point.Get("column"), UINT32_MAX / 2, "Point.column", allow_infinity);
+  const uint32_t column = character_column == UINT32_MAX ? UINT32_MAX : character_column * BYTES_PER_CHARACTER;
 
   return Napi::Just<TSPoint>({row, column});
 }
@@ -132,9 +119,7 @@ Napi::Maybe<uint32_t> ByteCountFromJS(const Napi::Value &arg) {
     TypeError::New(env, "Character index must be a number").ThrowAsJavaScriptException();
     return Napi::Nothing<uint32_t>();
   }
-  auto result = arg.As<Number>();
-
-  return Napi::Just<uint32_t>(result.Uint32Value() * BYTES_PER_CHARACTER);
+  return Napi::Just<uint32_t>(UnsignedInteger(arg, UINT32_MAX / 2, "Character index") * BYTES_PER_CHARACTER);
 }
 
 } // namespace node_tree_sitter

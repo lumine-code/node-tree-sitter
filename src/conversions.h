@@ -9,11 +9,12 @@
 namespace node_tree_sitter {
 
 void InitConversions(Napi::Env env, Napi::Object exports);
+uint32_t UnsignedInteger(const Napi::Value &, uint32_t maximum, const char *name, bool allow_infinity = false);
 Napi::Object RangeToJS(Napi::Env env, const TSRange &);
 Napi::Object PointToJS(Napi::Env env, const TSPoint &);
 void TransferPoint(Napi::Env env, const TSPoint &);
 Napi::Number ByteCountToJS(Napi::Env env, uint32_t);
-Napi::Maybe<TSPoint> PointFromJS(const Napi::Value &);
+Napi::Maybe<TSPoint> PointFromJS(const Napi::Value &, bool allow_infinity = true);
 Napi::Maybe<uint32_t> ByteCountFromJS(const Napi::Value &);
 Napi::Maybe<TSRange> RangeFromJS(const Napi::Value&);
 

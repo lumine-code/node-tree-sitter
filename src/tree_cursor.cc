@@ -16,6 +16,7 @@ void TreeCursor::Init(Napi::Env env, Napi::Object exports) {
   auto *data = env.GetInstanceData<AddonData>();
 
   Function ctor = DefineClass(env, "TreeCursor", {
+    InstanceAccessor("tree", &TreeCursor::Owner, nullptr, napi_default_method),
     InstanceAccessor("startIndex", &TreeCursor::StartIndex, nullptr, napi_default_method),
     InstanceAccessor("endIndex", &TreeCursor::EndIndex, nullptr, napi_default_method),
     InstanceAccessor("nodeType", &TreeCursor::NodeType, nullptr, napi_default_method),
@@ -47,12 +48,15 @@ void TreeCursor::Init(Napi::Env env, Napi::Object exports) {
   data->tree_cursor_constructor = Napi::Persistent(ctor);
 }
 
-Napi::Value TreeCursor::NewInstance(Napi::Env env, TSTreeCursor cursor) {
+Napi::Value TreeCursor::NewInstance(Napi::Env env, TSTreeCursor cursor, Napi::Object tree) {
   auto *data = env.GetInstanceData<AddonData>();
 
   OperationGuard construction(data->constructing_cursor);
   Object self = data->tree_cursor_constructor.New({});
-  TreeCursor::Unwrap(self)->cursor_ = cursor;
+  auto *wrapper = TreeCursor::Unwrap(self);
+  wrapper->cursor_ = cursor;
+  wrapper->AdoptTree(tree);
+  wrapper->root_descendants_ = ts_node_descendant_count(ts_tree_cursor_current_node(&cursor));
   return self;
 }
 
@@ -65,48 +69,67 @@ TreeCursor::TreeCursor(const Napi::CallbackInfo& info) : Napi::ObjectWrap<TreeCu
 
 TreeCursor::~TreeCursor() { ts_tree_cursor_delete(&cursor_); }
 
+void TreeCursor::AdoptTree(Napi::Object tree) {
+  tree_ = Tree::UnwrapTree(tree);
+  if (!tree_) throw TypeError::New(tree.Env(), "Expected a tree");
+  owner_.Reset(tree, 1);
+  generation_ = tree_->generation_;
+}
+
+void TreeCursor::CheckGeneration(Napi::Env env) const {
+  if (!tree_ || tree_->generation_ != generation_) throw Error::New(env, "Tree changed; reset the cursor before using it");
+}
+
+Napi::Value TreeCursor::Owner(const Napi::CallbackInfo &) { return owner_.Value(); }
+
 Napi::Value TreeCursor::GotoFirstChild(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   bool result = ts_tree_cursor_goto_first_child(&cursor_);
   return Boolean::New(info.Env(), result);
 }
 
 Napi::Value TreeCursor::GotoLastChild(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   bool result = ts_tree_cursor_goto_last_child(&cursor_);
   return Boolean::New(info.Env(), result);
 }
 
 Napi::Value TreeCursor::GotoParent(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   bool result = ts_tree_cursor_goto_parent(&cursor_);
   return Boolean::New(info.Env(), result);
 }
 
 Napi::Value TreeCursor::GotoNextSibling(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   bool result = ts_tree_cursor_goto_next_sibling(&cursor_);
   return Boolean::New(info.Env(), result);
 }
 
 Napi::Value TreeCursor::GotoPreviousSibling(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   bool result = ts_tree_cursor_goto_previous_sibling(&cursor_);
   return Boolean::New(info.Env(), result);
 }
 
 Napi::Value TreeCursor::GotoDescendant(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   Napi::Env env = info.Env();
   if (!info[0].IsNumber()) {
     throw TypeError::New(env, "First argument must be an integer");
   }
-  int64_t goal_descendant_index = info[0].As<Number>().Uint32Value();
+  uint32_t goal_descendant_index = UnsignedInteger(info[0], root_descendants_ - 1, "Descendant index");
   ts_tree_cursor_goto_descendant(&cursor_, goal_descendant_index);
   return env.Undefined();
 }
 
 Napi::Value TreeCursor::GotoFirstChildForIndex(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   Napi::Env env = info.Env();
   if (!info[0].IsNumber()) {
     throw TypeError::New(env, "First argument must be an integer");
   }
-  auto index = info[0].As<Number>();
-  uint32_t goal_byte = index.Uint32Value() * 2;
+  uint32_t goal_byte = UnsignedInteger(info[0], UINT32_MAX / 2, "Character index") * 2;
   int64_t child_index = ts_tree_cursor_goto_first_child_for_byte(&cursor_, goal_byte);
   if (child_index < 0) {
     return env.Null();
@@ -116,6 +139,7 @@ Napi::Value TreeCursor::GotoFirstChildForIndex(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value TreeCursor::GotoFirstChildForPosition(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   Napi::Env env = info.Env();
   Napi::Maybe<TSPoint> goal_point = PointFromJS(info[0].As<Object>());
   if (goal_point.IsNothing()) {
@@ -129,19 +153,22 @@ Napi::Value TreeCursor::GotoFirstChildForPosition(const Napi::CallbackInfo &info
 }
 
 Napi::Value TreeCursor::StartPosition(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   TSNode node = ts_tree_cursor_current_node(&cursor_);
   TransferPoint(info.Env(), ts_node_start_point(node));
   return info.Env().Undefined();
 }
 
 Napi::Value TreeCursor::EndPosition(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   TSNode node = ts_tree_cursor_current_node(&cursor_);
   TransferPoint(info.Env(), ts_node_end_point(node));
   return info.Env().Undefined();
 }
 
 Napi::Value TreeCursor::CurrentNode(const Napi::CallbackInfo &info) {
-  const Tree *tree = Tree::UnwrapTree(info.This().As<Object>()["tree"]);
+  CheckGeneration(info.Env());
+  const Tree *tree = tree_;
   TSNode node = ts_tree_cursor_current_node(&cursor_);
   return node_methods::MarshalNode(info, tree, node);
 }
@@ -150,6 +177,8 @@ Napi::Value TreeCursor::Reset(const Napi::CallbackInfo &info) {
   const Tree *tree = Tree::UnwrapTree(info.This().As<Object>()["tree"]);
   TSNode node = node_methods::UnmarshalNode(info.Env(), tree);
   ts_tree_cursor_reset(&cursor_, node);
+  AdoptTree(info[0].As<Object>());
+  root_descendants_ = ts_node_descendant_count(node);
   return info.Env().Undefined();
 }
 
@@ -160,37 +189,46 @@ Napi::Value TreeCursor::ResetTo(const Napi::CallbackInfo &info) {
     Napi::TypeError::New(info.Env(), "Argument must be a TreeCursor").ThrowAsJavaScriptException();
     return info.Env().Undefined();
   }
-  TSTreeCursor other_cursor = TreeCursor::Unwrap(info[0].As<Object>())->cursor_;
-  ts_tree_cursor_reset_to(&cursor_, &other_cursor);
+  auto *other = TreeCursor::Unwrap(info[0].As<Object>());
+  other->CheckGeneration(info.Env());
+  ts_tree_cursor_reset_to(&cursor_, &other->cursor_);
+  AdoptTree(other->owner_.Value());
+  root_descendants_ = other->root_descendants_;
   return info.Env().Undefined();
 }
 
 Napi::Value TreeCursor::NodeType(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   TSNode node = ts_tree_cursor_current_node(&cursor_);
   return String::New(info.Env(), ts_node_type(node));;
 }
 
 Napi::Value TreeCursor::NodeTypeId(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   TSNode node = ts_tree_cursor_current_node(&cursor_);
   return Number::New(info.Env(), static_cast<double>(ts_node_symbol(node)));
 }
 
 Napi::Value TreeCursor::NodeStateId(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   TSNode node = ts_tree_cursor_current_node(&cursor_);
   return Number::New(info.Env(), static_cast<double>(ts_node_parse_state(node)));
 }
 
 Napi::Value TreeCursor::NodeIsNamed(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   TSNode node = ts_tree_cursor_current_node(&cursor_);
   return Boolean::New(info.Env(), ts_node_is_named(node));
 }
 
 Napi::Value TreeCursor::NodeIsMissing(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   TSNode node = ts_tree_cursor_current_node(&cursor_);
   return Boolean::New(info.Env(), ts_node_is_missing(node));
 }
 
 Napi::Value TreeCursor::CurrentFieldId(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   TSFieldId field_id = ts_tree_cursor_current_field_id(&cursor_);
   if (field_id != 0) {
     return Number::New(info.Env(), static_cast<double>(field_id));
@@ -199,6 +237,7 @@ Napi::Value TreeCursor::CurrentFieldId(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value TreeCursor::CurrentFieldName(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   const char *field_name = ts_tree_cursor_current_field_name(&cursor_);
   if (field_name != nullptr) {
     return String::New(info.Env(), field_name);
@@ -207,19 +246,23 @@ Napi::Value TreeCursor::CurrentFieldName(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value TreeCursor::CurrentDepth(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   return Number::New(info.Env(), static_cast<double>(ts_tree_cursor_current_depth(&cursor_)));
 }
 
 Napi::Value TreeCursor::CurrentDescendantIndex(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   return Number::New(info.Env(), static_cast<double>(ts_tree_cursor_current_descendant_index(&cursor_)));
 }
 
 Napi::Value TreeCursor::StartIndex(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   TSNode node = ts_tree_cursor_current_node(&cursor_);
   return ByteCountToJS(info.Env(), ts_node_start_byte(node));
 }
 
 Napi::Value TreeCursor::EndIndex(const Napi::CallbackInfo &info) {
+  CheckGeneration(info.Env());
   TSNode node = ts_tree_cursor_current_node(&cursor_);
   return ByteCountToJS(info.Env(), ts_node_end_byte(node));
 }

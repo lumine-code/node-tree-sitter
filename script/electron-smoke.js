@@ -17,6 +17,8 @@ app
       const language = await Parser.loadLanguage('javascript', fs.readFileSync(${JSON.stringify(path.join(root, "test/fixtures/javascript.wasm"))}));
       const parser = new Parser.BackgroundParser(language);
       const first = await parser.parse('const x = 1;', {revision: 1});
+      globalThis.retainedSyntaxCursor = first.walk();
+      assert.equal(globalThis.retainedSyntaxCursor.nodeText, 'const x = 1;');
       const next = await parser.parse('const y = 1;', {previous: first, edits: [{startIndex: 6, oldEndIndex: 7, newText: 'y'}], revision: 2});
       assert.equal(first.rootNode.text, 'const x = 1;');
       assert.equal(next.rootNode.hasError, false);

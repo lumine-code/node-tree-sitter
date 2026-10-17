@@ -2,6 +2,7 @@
 #define NODE_TREE_SITTER_TREE_CURSOR_H_
 
 #include "./addon_data.h"
+#include "./tree.h"
 #include "tree_sitter/api.h"
 
 #include <napi.h>
@@ -11,7 +12,7 @@ namespace node_tree_sitter {
 class TreeCursor final : public Napi::ObjectWrap<TreeCursor> {
  public:
   static void Init(Napi::Env env, Napi::Object exports);
-  static Napi::Value NewInstance(Napi::Env Env, TSTreeCursor);
+  static Napi::Value NewInstance(Napi::Env Env, TSTreeCursor, Napi::Object tree);
 
   explicit TreeCursor(const Napi::CallbackInfo &);
   ~TreeCursor() final;
@@ -19,6 +20,13 @@ class TreeCursor final : public Napi::ObjectWrap<TreeCursor> {
   TSTreeCursor cursor_;
 
  private:
+  Napi::ObjectReference owner_;
+  const Tree *tree_ = nullptr;
+  uint64_t generation_ = 0;
+  uint32_t root_descendants_ = 0;
+  void AdoptTree(Napi::Object tree);
+  void CheckGeneration(Napi::Env env) const;
+  Napi::Value Owner(const Napi::CallbackInfo &);
   Napi::Value GotoFirstChild(const Napi::CallbackInfo &);
   Napi::Value GotoLastChild(const Napi::CallbackInfo &);
   Napi::Value GotoParent(const Napi::CallbackInfo &);

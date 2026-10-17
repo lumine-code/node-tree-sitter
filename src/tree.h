@@ -26,6 +26,7 @@ class Tree final : public Napi::ObjectWrap<Tree> {
 
   TSTree *tree_;
   bool snapshot_ = false;
+  uint64_t generation_ = 0;
   mutable uint32_t active_readers_ = 0;
   std::unordered_map<const void *, NodeCacheEntry *> cached_nodes_;
 

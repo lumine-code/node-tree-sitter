@@ -2,6 +2,7 @@
 #include "./language.h"
 #include "./node.h"
 #include "./operation.h"
+#include "./conversions.h"
 #include <memory>
 #include <cmath>
 
@@ -202,32 +203,41 @@ Napi::Value Query::Matches(const Napi::CallbackInfo &info) {
   uint32_t start_row = 0, start_column = 0, end_row = 0, end_column = 0, start_index = 0, end_index = 0,
              match_limit = UINT32_MAX, max_start_depth = UINT32_MAX, timeout_micros = 0;
 
-  if (info.Length() > 1 && info[1].IsNumber()) {
-    start_row = info[1].As<Number>().Uint32Value();
+  if (info.Length() > 1 && !info[1].IsUndefined()) {
+    const auto value = UnsignedInteger(info[1], UINT32_MAX, "start_row", true);
+    start_row = value;
   }
-  if (info.Length() > 2 && info[2].IsNumber()) {
-    start_column = info[2].As<Number>().Uint32Value() << 1;
+  if (info.Length() > 2 && !info[2].IsUndefined()) {
+    const auto value = UnsignedInteger(info[2], UINT32_MAX / 2, "start_column", true);
+    start_column = (value == UINT32_MAX ? value : value * 2);
   }
-  if (info.Length() > 3 && info[3].IsNumber()) {
-    end_row = info[3].As<Number>().Uint32Value();
+  if (info.Length() > 3 && !info[3].IsUndefined()) {
+    const auto value = UnsignedInteger(info[3], UINT32_MAX, "end_row", true);
+    end_row = value;
   }
-  if (info.Length() > 4 && info[4].IsNumber()) {
-    end_column = info[4].As<Number>().Uint32Value() << 1;
+  if (info.Length() > 4 && !info[4].IsUndefined()) {
+    const auto value = UnsignedInteger(info[4], UINT32_MAX / 2, "end_column", true);
+    end_column = (value == UINT32_MAX ? value : value * 2);
   }
-  if (info.Length() > 5 && info[5].IsNumber()) {
-    start_index = info[5].As<Number>().Uint32Value() << 1;
+  if (info.Length() > 5 && !info[5].IsUndefined()) {
+    const auto value = UnsignedInteger(info[5], UINT32_MAX / 2, "start_index", false);
+    start_index = value * 2;
   }
-  if (info.Length() > 6 && info[6].IsNumber()) {
-    end_index = info[6].As<Number>().Uint32Value() << 1;
+  if (info.Length() > 6 && !info[6].IsUndefined()) {
+    const auto value = UnsignedInteger(info[6], UINT32_MAX / 2, "end_index", false);
+    end_index = value * 2;
   }
-  if (info.Length() > 7 && info[7].IsNumber()) {
-    match_limit = info[7].As<Number>().Uint32Value();
+  if (info.Length() > 7 && !info[7].IsUndefined()) {
+    const auto value = UnsignedInteger(info[7], UINT32_MAX, "match_limit", false);
+    match_limit = value;
   }
-  if (info.Length() > 8 && info[8].IsNumber()) {
-    max_start_depth = info[8].As<Number>().Uint32Value();
+  if (info.Length() > 8 && !info[8].IsUndefined()) {
+    const auto value = UnsignedInteger(info[8], UINT32_MAX, "max_start_depth", true);
+    max_start_depth = value;
   }
-  if (info.Length() > 9 && info[9].IsNumber()) {
-    timeout_micros = info[9].As<Number>().Uint32Value();
+  if (info.Length() > 9 && !info[9].IsUndefined()) {
+    const auto value = UnsignedInteger(info[9], UINT32_MAX, "timeout_micros", false);
+    timeout_micros = value;
   }
 
   if (query == nullptr) {
@@ -243,13 +253,16 @@ Napi::Value Query::Matches(const Napi::CallbackInfo &info) {
   TSNode root_node = node_methods::UnmarshalNode(env, tree);
   TSPoint start_point = {start_row, start_column};
   TSPoint end_point = {end_row, end_column};
-  ts_query_cursor_set_point_range(cursor, start_point, end_point);
-  ts_query_cursor_set_byte_range(cursor, start_index, end_index);
+  if (!ts_query_cursor_set_point_range(cursor, start_point, end_point)) throw RangeError::New(env, "Invalid query point range");
+  if (!ts_query_cursor_set_byte_range(cursor, start_index, end_index)) throw RangeError::New(env, "Invalid query index range");
   ts_query_cursor_set_match_limit(cursor, match_limit);
   ts_query_cursor_set_max_start_depth(cursor, max_start_depth);
   CallbackProgress progress;
   progress.timeout = timeout_micros;
-  if (info.Length() > 10 && info[10].IsFunction()) progress.func = Napi::Persistent(info[10].As<Function>());
+  if (info.Length() > 10 && !info[10].IsUndefined() && !info[10].IsNull()) {
+    if (!info[10].IsFunction()) throw TypeError::New(env, "progressCallback must be a function");
+    progress.func = Napi::Persistent(info[10].As<Function>());
+  }
   TSQueryCursorOptions options{&progress, CallbackProgress::Cancel};
   ts_query_cursor_exec_with_options(cursor, ts_query, root_node, &options);
 
@@ -300,32 +313,41 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
   uint32_t start_row = 0, start_column = 0, end_row = 0, end_column = 0, start_index = 0, end_index = 0,
              match_limit = UINT32_MAX, max_start_depth = UINT32_MAX, timeout_micros = 0;
 
-  if (info.Length() > 1 && info[1].IsNumber()) {
-    start_row = info[1].As<Number>().Uint32Value();
+  if (info.Length() > 1 && !info[1].IsUndefined()) {
+    const auto value = UnsignedInteger(info[1], UINT32_MAX, "start_row", true);
+    start_row = value;
   }
-  if (info.Length() > 2 && info[2].IsNumber()) {
-    start_column = info[2].As<Number>().Uint32Value() << 1;
+  if (info.Length() > 2 && !info[2].IsUndefined()) {
+    const auto value = UnsignedInteger(info[2], UINT32_MAX / 2, "start_column", true);
+    start_column = (value == UINT32_MAX ? value : value * 2);
   }
-  if (info.Length() > 3 && info[3].IsNumber()) {
-    end_row = info[3].As<Number>().Uint32Value();
+  if (info.Length() > 3 && !info[3].IsUndefined()) {
+    const auto value = UnsignedInteger(info[3], UINT32_MAX, "end_row", true);
+    end_row = value;
   }
-  if (info.Length() > 4 && info[4].IsNumber()) {
-    end_column = info[4].As<Number>().Uint32Value() << 1;
+  if (info.Length() > 4 && !info[4].IsUndefined()) {
+    const auto value = UnsignedInteger(info[4], UINT32_MAX / 2, "end_column", true);
+    end_column = (value == UINT32_MAX ? value : value * 2);
   }
-  if (info.Length() > 5 && info[5].IsNumber()) {
-    start_index = info[5].As<Number>().Uint32Value() << 1;
+  if (info.Length() > 5 && !info[5].IsUndefined()) {
+    const auto value = UnsignedInteger(info[5], UINT32_MAX / 2, "start_index", false);
+    start_index = value * 2;
   }
-  if (info.Length() > 6 && info[6].IsNumber()) {
-    end_index = info[6].As<Number>().Uint32Value() << 1;
+  if (info.Length() > 6 && !info[6].IsUndefined()) {
+    const auto value = UnsignedInteger(info[6], UINT32_MAX / 2, "end_index", false);
+    end_index = value * 2;
   }
-  if (info.Length() > 7 && info[7].IsNumber()) {
-    match_limit = info[7].As<Number>().Uint32Value();
+  if (info.Length() > 7 && !info[7].IsUndefined()) {
+    const auto value = UnsignedInteger(info[7], UINT32_MAX, "match_limit", false);
+    match_limit = value;
   }
-  if (info.Length() > 8 && info[8].IsNumber()) {
-    max_start_depth = info[8].As<Number>().Uint32Value();
+  if (info.Length() > 8 && !info[8].IsUndefined()) {
+    const auto value = UnsignedInteger(info[8], UINT32_MAX, "max_start_depth", true);
+    max_start_depth = value;
   }
-  if (info.Length() > 9 && info[9].IsNumber()) {
-    timeout_micros = info[9].As<Number>().Uint32Value();
+  if (info.Length() > 9 && !info[9].IsUndefined()) {
+    const auto value = UnsignedInteger(info[9], UINT32_MAX, "timeout_micros", false);
+    timeout_micros = value;
   }
 
   if (query == nullptr) {
@@ -341,13 +363,16 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
   TSNode root_node = node_methods::UnmarshalNode(env, tree);
   TSPoint start_point = {start_row, start_column};
   TSPoint end_point = {end_row, end_column};
-  ts_query_cursor_set_point_range(cursor, start_point, end_point);
-  ts_query_cursor_set_byte_range(cursor, start_index, end_index);
+  if (!ts_query_cursor_set_point_range(cursor, start_point, end_point)) throw RangeError::New(env, "Invalid query point range");
+  if (!ts_query_cursor_set_byte_range(cursor, start_index, end_index)) throw RangeError::New(env, "Invalid query index range");
   ts_query_cursor_set_match_limit(cursor, match_limit);
   ts_query_cursor_set_max_start_depth(cursor, max_start_depth);
   CallbackProgress progress;
   progress.timeout = timeout_micros;
-  if (info.Length() > 10 && info[10].IsFunction()) progress.func = Napi::Persistent(info[10].As<Function>());
+  if (info.Length() > 10 && !info[10].IsUndefined() && !info[10].IsNull()) {
+    if (!info[10].IsFunction()) throw TypeError::New(env, "progressCallback must be a function");
+    progress.func = Napi::Persistent(info[10].As<Function>());
+  }
   TSQueryCursorOptions options{&progress, CallbackProgress::Cancel};
   ts_query_cursor_exec_with_options(cursor, ts_query, root_node, &options);
 

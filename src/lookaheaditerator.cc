@@ -8,6 +8,7 @@
 using namespace Napi;
 
 namespace node_tree_sitter {
+const napi_type_tag LOOKAHEAD_TYPE_TAG = {0x8AF2E5212AD58ABF, 0x4C6F6F6B41686561};
 
 void LookaheadIterator::Init(Napi::Env env, Napi::Object exports) {
   auto *data = env.GetInstanceData<AddonData>();
@@ -27,6 +28,7 @@ void LookaheadIterator::Init(Napi::Env env, Napi::Object exports) {
 
 LookaheadIterator::LookaheadIterator(const Napi::CallbackInfo &info) : Napi::ObjectWrap<LookaheadIterator>(info), iterator_(nullptr) {
   Napi::Env env = info.Env();
+  Value().TypeTag(&LOOKAHEAD_TYPE_TAG);
   const TSLanguage *language = language_methods::UnwrapLanguage(info[0]);
 
   if (language == nullptr) {
@@ -38,7 +40,7 @@ LookaheadIterator::LookaheadIterator(const Napi::CallbackInfo &info) : Napi::Obj
     return;
   }
 
-  TSStateId state = info[1].As<Napi::Number>().Uint32Value();
+  TSStateId state = static_cast<TSStateId>(UnsignedInteger(info[1], UINT16_MAX, "Parse state"));
   iterator_ = ts_lookahead_iterator_new(language, state);
   if (iterator_ == nullptr) {
     Napi::Error::New(env, "Invalid state argument").ThrowAsJavaScriptException();
@@ -51,24 +53,13 @@ LookaheadIterator::~LookaheadIterator() {
   ts_lookahead_iterator_delete(iterator_);
 }
 
-Napi::Value LookaheadIterator::NewInstance(Napi::Env env, TSLookaheadIterator *iterator) {
-  auto *data = env.GetInstanceData<AddonData>();
-  if (iterator != nullptr) {
-    Object self = data->lookahead_iterator_constructor.New({});
-    LookaheadIterator::Unwrap(self)->iterator_ = iterator;
-    return self;
-  }
-
-  return env.Null();
-}
-
 LookaheadIterator *LookaheadIterator::UnwrapLookaheadIterator(const Napi::Value &value) {
   auto *data = value.Env().GetInstanceData<AddonData>();
   if (!value.IsObject()) {
     return nullptr;
   }
   auto js_iterator = value.As<Object>();
-  if (!js_iterator.InstanceOf(data->lookahead_iterator_constructor.Value())) {
+  if (!js_iterator.CheckTypeTag(&LOOKAHEAD_TYPE_TAG)) {
     return nullptr;
   }
   return LookaheadIterator::Unwrap(js_iterator);
@@ -109,7 +100,7 @@ Napi::Value LookaheadIterator::Reset(const Napi::CallbackInfo &info) {
     return info.Env().Undefined();
   }
 
-  TSStateId state = info[1].As<Napi::Number>().Uint32Value();
+  TSStateId state = static_cast<TSStateId>(UnsignedInteger(info[1], UINT16_MAX, "Parse state"));
   return Napi::Boolean::New(info.Env(), ts_lookahead_iterator_reset(iterator->iterator_, language, state));
 }
 
@@ -126,7 +117,7 @@ Napi::Value LookaheadIterator::ResetState(const Napi::CallbackInfo &info) {
     return env.Undefined();
   }
 
-  TSStateId state = info[0].As<Napi::Number>().Uint32Value();
+  TSStateId state = static_cast<TSStateId>(UnsignedInteger(info[0], UINT16_MAX, "Parse state"));
   return Napi::Boolean::New(env, ts_lookahead_iterator_reset_state(iterator->iterator_, state));
 }
 

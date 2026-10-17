@@ -350,7 +350,6 @@ class SyntaxNode {
   walk () {
     marshalNode(this);
     const cursor = NodeMethods.walk(this.tree);
-    cursor.tree = this.tree;
     unmarshalNode(cursor.currentNode, this.tree);
     return cursor;
   }
@@ -414,12 +413,10 @@ const {startPosition, endPosition, currentNode, reset, resetTo} = TreeCursor.pro
 TreeCursor.prototype.reset = function(node) {
   if (!(node instanceof SyntaxNode)) throw new TypeError('Expected a syntax node');
   marshalNode(node);
-  this.tree = node.tree;
-  reset.call(this);
+  reset.call(this, node.tree);
 };
 TreeCursor.prototype.resetTo = function(other) {
   resetTo.call(this, other);
-  this.tree = other.tree;
 };
 
 Object.defineProperties(TreeCursor.prototype, {
@@ -780,15 +777,24 @@ function getTextFromString (node) {
   return this.input.substring(node.startIndex, node.endIndex);
 }
 
-function getTextFromFunction ({startIndex, endIndex}) {
-  const {input} = this
-  let result = '';
-  const goalLength = endIndex - startIndex;
-  while (result.length < goalLength) {
-    const text = input(startIndex + result.length);
-    result += text;
+function getTextFromFunction ({startIndex, endIndex, startPosition}) {
+  const chunks = [];
+  let offset = startIndex, position = {...startPosition};
+  while (offset < endIndex) {
+    const chunk = this.input(offset, position);
+    if (typeof chunk !== 'string' || chunk.length === 0) break;
+    const text = chunk.slice(0, endIndex - offset);
+    chunks.push(text);
+    offset += text.length;
+    const lastNewline = text.lastIndexOf('\n');
+    if (lastNewline < 0) position = {row: position.row, column: position.column + text.length};
+    else {
+      let rows = 0;
+      for (let next = text.indexOf('\n'); next !== -1; next = text.indexOf('\n', next + 1)) rows++;
+      position = {row: position.row + rows, column: text.length - lastNewline - 1};
+    }
   }
-  return result.slice(0, goalLength);
+  return chunks.join('');
 }
 
 const {pointTransferArray} = binding;

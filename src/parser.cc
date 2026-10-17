@@ -183,9 +183,7 @@ bool handle_included_ranges(Napi::Env env, TSParser *parser, Napi::Value arg) {
     vector<TSRange> included_ranges;
     for (unsigned i = 0; i < js_included_ranges.Length(); i++) {
       Value range_value = js_included_ranges[i];
-      if (!range_value.IsObject()) {
-        return false;
-      }
+      if (!range_value.IsObject()) throw TypeError::New(env, "Included ranges must contain range objects");
       auto maybe_range = RangeFromJS(range_value);
       if (!maybe_range.IsJust()) {
         return false;
@@ -197,8 +195,9 @@ bool handle_included_ranges(Napi::Env env, TSParser *parser, Napi::Value arg) {
       last_included_range_end = range.end_byte;
       included_ranges.push_back(range);
     }
-    ts_parser_set_included_ranges(parser, included_ranges.data(), included_ranges.size());
+    if (!ts_parser_set_included_ranges(parser, included_ranges.data(), included_ranges.size())) throw RangeError::New(env, "Invalid included ranges");
   } else {
+    if (!arg.IsUndefined() && !arg.IsNull()) throw TypeError::New(env, "includedRanges must be an array");
     ts_parser_set_included_ranges(parser, nullptr, 0);
   }
 
@@ -257,7 +256,10 @@ Napi::Value Parser::Parse(const CallbackInfo &info) {
 
   CallbackProgress progress;
   progress.timeout = timeout_micros_;
-  if (info.Length() > 4 && info[4].IsFunction()) progress.func = Napi::Persistent(info[4].As<Function>());
+  if (info.Length() > 4 && !info[4].IsUndefined() && !info[4].IsNull()) {
+    if (!info[4].IsFunction()) throw TypeError::New(env, "progressCallback must be a function");
+    progress.func = Napi::Persistent(info[4].As<Function>());
+  }
   TSParseOptions options{&progress, CallbackProgress::Cancel};
   TSTree *tree = ts_parser_parse_with_options(parser_, old_tree, callback_input.Input(), options);
   if (env.IsExceptionPending()) { ts_tree_delete(tree); ts_parser_reset(parser_); return env.Undefined(); }
@@ -287,7 +289,7 @@ Napi::Value Parser::SetTimeoutMicros(const Napi::CallbackInfo &info) {
   if (!info[0].IsNumber()) {
     throw TypeError::New(info.Env(), "First argument must be a number");
   }
-  timeout_micros = info[0].As<Number>().Uint32Value();
+  timeout_micros = UnsignedInteger(info[0], UINT32_MAX, "timeoutMicros");
   timeout_micros_ = timeout_micros;
   return info.This();
 }

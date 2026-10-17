@@ -10,7 +10,7 @@ namespace node_tree_sitter {
 class LookaheadIterator final : public Napi::ObjectWrap<LookaheadIterator> {
  public:
   static void Init(Napi::Env env, Napi::Object exports);
-  static Napi::Value NewInstance(Napi::Env env, TSLookaheadIterator *);
+
   static LookaheadIterator *UnwrapLookaheadIterator(const Napi::Value &);
 
   explicit LookaheadIterator(const Napi::CallbackInfo &);

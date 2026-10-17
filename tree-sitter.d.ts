@@ -598,6 +598,8 @@ declare module "@lumine-code/node-tree-sitter" {
 
     /** A stateful object for walking a syntax {@link Tree} efficiently */
     export interface TreeCursor {
+      /** The retained owner; changes only through reset/resetTo. */
+      readonly tree: Tree;
       /** The type of the current node as a string */
       nodeType: string;
 

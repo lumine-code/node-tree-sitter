@@ -1008,7 +1008,7 @@ Napi::Value Walk(const Napi::CallbackInfo &info) {
   const Tree *tree = Tree::UnwrapTree(info[0]);
   TSNode node = UnmarshalNode(env, tree);
   TSTreeCursor cursor = ts_tree_cursor_new(node);
-  return TreeCursor::NewInstance(env, cursor);
+  return TreeCursor::NewInstance(env, cursor, info[0].As<Object>());
 }
 
 } // namespace

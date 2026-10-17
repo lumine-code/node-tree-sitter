@@ -80,16 +80,8 @@ const Tree *Tree::UnwrapTree(const Napi::Value &value) {
   return Tree::Unwrap(js_tree);
 }
 
-#define read_number_from_js(out, value, name)                                \
-  if (!(value).IsNumber()) {                                                   \
-    throw TypeError::New(env, name " must be an integer");                   \
-    return env.Undefined();                                                  \
-  }                                                                          \
-  *(out) = (value).As<Number>().Uint32Value();
-
-#define read_byte_count_from_js(out, value, name)   \
-  read_number_from_js(out, value, name);            \
-  (*(out)) *= 2
+#define read_number_from_js(out, value, name) (*(out) = UnsignedInteger(value, UINT32_MAX, name))
+#define read_byte_count_from_js(out, value, name) (*(out) = UnsignedInteger(value, UINT32_MAX / 2, name) * 2)
 
 Napi::Value Tree::Copy(const Napi::CallbackInfo &info) {
   return NewInstance(info.Env(), ts_tree_copy(tree_));
@@ -110,14 +102,21 @@ Napi::Value Tree::Edit(const Napi::CallbackInfo &info) {
   read_byte_count_from_js(&edit.old_end_byte, info[7], "oldEndIndex");
   read_byte_count_from_js(&edit.new_end_byte, info[8], "newEndIndex");
 
+  auto ordered = [](TSPoint start, TSPoint end) { return start.row < end.row || (start.row == end.row && start.column <= end.column); };
+  if (edit.start_byte > edit.old_end_byte || edit.start_byte > edit.new_end_byte ||
+      !ordered(edit.start_point, edit.old_end_point) || !ordered(edit.start_point, edit.new_end_point)) {
+    throw RangeError::New(env, "Edit endpoints must not precede their start");
+  }
   ts_tree_edit(tree_, &edit);
+  generation_++;
 
   for (auto &entry : cached_nodes_) {
     Object js_node = entry.second->node.Value();
     if (js_node.IsEmpty()) {
       continue;
     }
-    TSNode node;
+    TSNode node{};
+    node.tree = tree_;
     node.id = entry.first;
     for (unsigned i = 0; i < 4; i++) {
       Napi::Value node_field = js_node[i + 2];
