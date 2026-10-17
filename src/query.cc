@@ -165,18 +165,18 @@ Napi::Value Query::GetPredicates(const Napi::CallbackInfo &info) {
         const TSQueryPredicateStep predicate = predicates[i];
         uint32_t len;
         switch (predicate.type) {
-          case TSQueryPredicateStepTypeCapture:
+          case TSQueryPredicateStepTypeCapture: {
             js_predicate[p_index++] = Number::New(env, TSQueryPredicateStepTypeCapture);
-            js_predicate[p_index++] = String::New(env,
-              ts_query_capture_name_for_id(ts_query, predicate.value_id, &len)
-            );
+            const char *value = ts_query_capture_name_for_id(ts_query, predicate.value_id, &len);
+            js_predicate[p_index++] = String::New(env, value, len);
             break;
-          case TSQueryPredicateStepTypeString:
+          }
+          case TSQueryPredicateStepTypeString: {
             js_predicate[p_index++] = Number::New(env, TSQueryPredicateStepTypeString);
-            js_predicate[p_index++] = String::New(env,
-              ts_query_string_value_for_id(ts_query, predicate.value_id, &len)
-            );
+            const char *value = ts_query_string_value_for_id(ts_query, predicate.value_id, &len);
+            js_predicate[p_index++] = String::New(env, value, len);
             break;
+          }
           case TSQueryPredicateStepTypeDone:
             js_pattern_predicates[a_index++] = js_predicate;
             js_predicate = Array::New(env);
@@ -481,7 +481,7 @@ Napi::Value Query::DisablePattern(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value Query::IsPatternGuaranteedAtStep(const Napi::CallbackInfo &info) {
-  uint32_t byte_offset = info[0].As<Number>().Uint32Value();
+  uint32_t byte_offset = UnsignedInteger(info[0], UINT32_MAX, "Query byte offset");
   return Boolean::New(info.Env(), ts_query_is_pattern_guaranteed_at_step(query_, byte_offset));
 }
 

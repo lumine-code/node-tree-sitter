@@ -1,11 +1,13 @@
 module.exports = [
   {
     files: [
+      "index.js",
       "background-parser.js",
       "text-edits.js",
       "test/review_test.js",
       "test/lifecycle_test.js",
       "test/predicates_test.js",
+      "test/final_review_test.js",
       "script/**/*.js",
       "test/wasm_test.js",
       "test/api_test.js",

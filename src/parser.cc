@@ -28,6 +28,7 @@ class CallbackInput final {
       }
       buffer.resize(js_buffer_size.As<Number>().Uint32Value());
     } else {
+      if (!js_buffer_size.IsNull() && !js_buffer_size.IsUndefined()) throw TypeError::New(callback.Env(), "bufferSize must be a number");
       buffer.resize(static_cast<uint64_t>(32 * 1024));
     }
   }
@@ -235,7 +236,8 @@ Napi::Value Parser::Parse(const CallbackInfo &info) {
   Object js_old_tree;
   const Tree *old_tree_owner = nullptr;
   const TSTree *old_tree = nullptr;
-  if (info.Length() > 1 && !info[1].IsNull() && !info[1].IsUndefined() && info[1].IsObject()) {
+  if (info.Length() > 1 && !info[1].IsNull() && !info[1].IsUndefined()) {
+    if (!info[1].IsObject()) throw TypeError::New(env, "Second argument must be a tree");
     js_old_tree = info[1].As<Object>();
     const Tree *tree = Tree::UnwrapTree(js_old_tree);
     if (tree == nullptr) {
@@ -326,6 +328,7 @@ Napi::Value Parser::SetLogger(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value Parser::PrintDotGraphs(const Napi::CallbackInfo &info) {
+  if (parsing_) throw Error::New(info.Env(), "Cannot modify an active parser");
   bool should_print = true;
   int fd = fileno(stderr);
 

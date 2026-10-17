@@ -7,7 +7,7 @@ declare module "@lumine-code/node-tree-sitter" {
      *
      * @param input - The text to parse, either as a string or a custom input function
      * that provides text chunks. If providing a function, it should return text chunks
-     * based on byte index and position.
+     * based on UTF-16 code-unit index and position.
      *
      * @param oldTree - An optional previous syntax tree from the same document.
      * If provided and the document has changed, you must first edit this tree using
@@ -51,7 +51,7 @@ declare module "@lumine-code/node-tree-sitter" {
      *
      * @deprecated Use the {@link progressCallback}
      */
-    setTimeoutMicros(timeout: number): void;
+    setTimeoutMicros(timeout: number): this;
 
     /**
      * Instruct the parser to start the next parse from the beginning.
@@ -60,12 +60,12 @@ declare module "@lumine-code/node-tree-sitter" {
      * on the next parse by default. Call this method if you want to parse
      * a different document instead of resuming.
      */
-    reset(): void;
+    reset(): this;
 
     /**
      * Get the parser's current language
      */
-    getLanguage(): Parser.Language;
+    getLanguage(): Parser.Language | null;
 
     /**
      * Set the language that the parser should use for parsing.
@@ -76,21 +76,21 @@ declare module "@lumine-code/node-tree-sitter" {
      *
      * @param language - The language to use for parsing
      */
-    setLanguage(language?: Parser.Language): void;
+    setLanguage(language: Parser.Language): this;
 
     /**
      * Get the parser's current logger
      *
      * @returns The current logging callback
      */
-    getLogger(): Parser.Logger;
+    getLogger(): Parser.Logger | null;
 
     /**
      * Set the logging callback that the parser should use during parsing.
      *
      * @param logFunc - The logging callback to use, or null/false to disable logging
      */
-    setLogger(logFunc?: Parser.Logger | string | false | null): void;
+    setLogger(logFunc?: Parser.Logger | false | null): this;
 
     /**
      * Set the destination to which the parser should write debugging graphs during parsing.
@@ -101,7 +101,7 @@ declare module "@lumine-code/node-tree-sitter" {
      * @param enabled - Whether to enable or disable graph output
      * @param fd - Optional file descriptor for the output
      */
-    printDotGraphs(enabled?: boolean, fd?: number): void;
+    printDotGraphs(enabled?: boolean, fd?: number): this;
   }
 
   namespace Parser {
@@ -115,9 +115,10 @@ declare module "@lumine-code/node-tree-sitter" {
     export interface Snapshot extends Tree {
       readonly input: string;
       readonly revision: number;
+      readonly language: Language;
     }
     export interface BackgroundParseOptions {
-      previous?: Snapshot;
+      previous?: Snapshot | null;
       edits?: SnapshotEdit[];
       includedRanges?: Range[];
       signal?: AbortSignal;
@@ -144,7 +145,7 @@ declare module "@lumine-code/node-tree-sitter" {
       /**
        * A callback that receives the parse state during parsing.
        *
-       * @param index - The byte offset in the document that the parser is currently at
+       * @param index - The UTF-16 code-unit offset in the document that the parser is currently at
        * @param hasError - Indicates whether the parser has encountered an error during parsing
        *
        * @returns `true` to stop parsing or `false` to continue
@@ -166,13 +167,13 @@ declare module "@lumine-code/node-tree-sitter" {
 
     /**
      * A range of positions in a multi-line text document, specified both in
-     * terms of byte offsets and row/column positions.
+     * terms of UTF-16 code-unit offsets and row/column positions.
      */
     export type Range = {
-      /** The byte offset of the start of the range */
+      /** The UTF-16 code-unit offset of the start of the range */
       startIndex: number;
 
-      /** The byte offset of the end of the range */
+      /** The UTF-16 code-unit offset of the end of the range */
       endIndex: number;
 
       /** The row and column where the range starts */
@@ -186,13 +187,13 @@ declare module "@lumine-code/node-tree-sitter" {
      * A summary of a change to a text document
      */
     export type Edit = {
-      /** The byte offset where the edit starts */
+      /** The UTF-16 code-unit offset where the edit starts */
       startIndex: number;
 
-      /** The byte offset where the edit ends in the old document */
+      /** The UTF-16 code-unit offset where the edit ends in the old document */
       oldEndIndex: number;
 
-      /** The byte offset where the edit ends in the new document */
+      /** The UTF-16 code-unit offset where the edit ends in the new document */
       newEndIndex: number;
 
       /** The row and column where the edit starts */
@@ -214,12 +215,12 @@ declare module "@lumine-code/node-tree-sitter" {
      */
     export type Logger = (message: string, params: { [param: string]: string }, type: "parse" | "lex") => void;
 
-    /** A function that provides text content for parsing based on byte index and position */
+    /** A function that provides text content for parsing based on UTF-16 code-unit index and position */
     export interface Input {
       /**
-       * Get a chunk of text at the given byte offset.
+       * Get a chunk of text at the given UTF-16 code-unit offset.
        *
-       * @param index - The byte index into the text
+       * @param index - The UTF-16 code-unit index into the text
        * @param position - Optional position in the text as {row, column}
        * @returns A string chunk, or null/undefined if no text at this index
        */
@@ -315,10 +316,10 @@ declare module "@lumine-code/node-tree-sitter" {
       /** The position where this node ends in terms of rows and columns */
       readonly endPosition: Point;
 
-      /** The byte offset where this node starts */
+      /** The UTF-16 code-unit offset where this node starts */
       readonly startIndex: number;
 
-      /** The byte offset where this node ends */
+      /** The UTF-16 code-unit offset where this node ends */
       readonly endIndex: number;
 
       /**
@@ -374,7 +375,7 @@ declare module "@lumine-code/node-tree-sitter" {
       /**
        * The names of extra fields available in the subclass, if any.
        */
-      readonly fields: Array<`${string}Node` | `${string}Nodes`>;
+      readonly fields?: ReadonlyArray<`${string}Node` | `${string}Nodes`>;
 
       /**
        * Convert this node to its string representation
@@ -432,17 +433,17 @@ declare module "@lumine-code/node-tree-sitter" {
        * Get the field name of the child at the given index
        *
        * @param childIndex - Zero-based index of the child
-       * @returns The field name, or null if the child has no field name
+       * @returns The field name, or undefined if the child has no field name
        */
-      fieldNameForChild(childIndex: number): string | null;
+      fieldNameForChild(childIndex: number): string | undefined;
 
       /**
        * Get the field name of the named child at the given index
        *
        * @param namedChildIndex - Zero-based index of the named child
-       * @returns The field name, or null if the named child has no field name
+       * @returns The field name, or undefined if the named child has no field name
        */
-      fieldNameForNamedChild(namedChildIndex: number): string | null;
+      fieldNameForNamedChild(namedChildIndex: number): string | undefined;
 
       /**
        * Get all children that have the given field name
@@ -461,17 +462,17 @@ declare module "@lumine-code/node-tree-sitter" {
       childrenForFieldId(fieldId: number): Array<SyntaxNode>;
 
       /**
-       * Get the node's first child that extends beyond the given byte offset
+       * Get the node's first child that extends beyond the given UTF-16 code-unit offset
        *
-       * @param index - The byte offset to search from
+       * @param index - The UTF-16 code-unit offset to search from
        * @returns The first child extending beyond the offset, or null if none found
        */
       firstChildForIndex(index: number): SyntaxNode | null;
 
       /**
-       * Get the node's first named child that extends beyond the given byte offset
+       * Get the node's first named child that extends beyond the given UTF-16 code-unit offset
        *
-       * @param index - The byte offset to search from
+       * @param index - The UTF-16 code-unit offset to search from
        * @returns The first named child extending beyond the offset, or null if none found
        */
       firstNamedChildForIndex(index: number): SyntaxNode | null;
@@ -486,38 +487,38 @@ declare module "@lumine-code/node-tree-sitter" {
       childWithDescendant(descendant: SyntaxNode): SyntaxNode | null;
 
       /**
-       * Get the smallest node within this node that spans the given byte offset.
+       * Get the smallest node within this node that spans the given UTF-16 code-unit offset.
        *
-       * @param index - The byte offset to search for
+       * @param index - The UTF-16 code-unit offset to search for
        * @returns The smallest node spanning the offset
        */
-      descendantForIndex(index: number): SyntaxNode;
+      descendantForIndex(index: number): SyntaxNode | null;
 
       /**
-       * Get the smallest node within this node that spans the given byte range.
+       * Get the smallest node within this node that spans the given UTF-16 code-unit range.
        *
-       * @param startIndex - The starting byte offset
-       * @param endIndex - The ending byte offset
+       * @param startIndex - The starting UTF-16 code-unit offset
+       * @param endIndex - The ending UTF-16 code-unit offset
        * @returns The smallest node spanning the range
        */
-      descendantForIndex(startIndex: number, endIndex: number): SyntaxNode;
+      descendantForIndex(startIndex: number, endIndex: number): SyntaxNode | null;
 
       /**
-       * Get the smallest named node within this node that spans the given byte offset.
+       * Get the smallest named node within this node that spans the given UTF-16 code-unit offset.
        *
-       * @param index - The byte offset to search for
+       * @param index - The UTF-16 code-unit offset to search for
        * @returns The smallest named node spanning the offset
        */
-      namedDescendantForIndex(index: number): SyntaxNode;
+      namedDescendantForIndex(index: number): SyntaxNode | null;
 
       /**
-       * Get the smallest named node within this node that spans the given byte range.
+       * Get the smallest named node within this node that spans the given UTF-16 code-unit range.
        *
-       * @param startIndex - The starting byte offset
-       * @param endIndex - The ending byte offset
+       * @param startIndex - The starting UTF-16 code-unit offset
+       * @param endIndex - The ending UTF-16 code-unit offset
        * @returns The smallest named node spanning the range
        */
-      namedDescendantForIndex(startIndex: number, endIndex: number): SyntaxNode;
+      namedDescendantForIndex(startIndex: number, endIndex: number): SyntaxNode | null;
 
       /**
        * Get the smallest node within this node that spans the given position.
@@ -526,7 +527,7 @@ declare module "@lumine-code/node-tree-sitter" {
        * @param position - The point to search for
        * @returns The smallest node spanning the position
        */
-      descendantForPosition(position: Point): SyntaxNode;
+      descendantForPosition(position: Point): SyntaxNode | null;
 
       /**
        * Get the smallest node within this node that spans the given position range.
@@ -535,7 +536,7 @@ declare module "@lumine-code/node-tree-sitter" {
        * @param endPosition - The ending position
        * @returns The smallest node spanning the range
        */
-      descendantForPosition(startPosition: Point, endPosition: Point): SyntaxNode;
+      descendantForPosition(startPosition: Point, endPosition: Point): SyntaxNode | null;
 
       /**
        * Get the smallest named node within this node that spans the given position.
@@ -544,7 +545,7 @@ declare module "@lumine-code/node-tree-sitter" {
        * @param position - The point to search for
        * @returns The smallest named node spanning the position
        */
-      namedDescendantForPosition(position: Point): SyntaxNode;
+      namedDescendantForPosition(position: Point): SyntaxNode | null;
 
       /**
        * Get the smallest named node within this node that spans the given position range.
@@ -553,7 +554,7 @@ declare module "@lumine-code/node-tree-sitter" {
        * @param endPosition - The ending position
        * @returns The smallest named node spanning the range
        */
-      namedDescendantForPosition(startPosition: Point, endPosition: Point): SyntaxNode;
+      namedDescendantForPosition(startPosition: Point, endPosition: Point): SyntaxNode | null;
 
       /**
        * Get all descendants of this node that have the given type(s)
@@ -563,7 +564,7 @@ declare module "@lumine-code/node-tree-sitter" {
        * @param endPosition - Optional ending position to search to
        * @returns Array of descendant nodes matching the given types
        */
-      descendantsOfType(types: String | Array<String>, startPosition?: Point, endPosition?: Point): Array<SyntaxNode>;
+      descendantsOfType(types: string | Array<string>, startPosition?: Point, endPosition?: Point): Array<SyntaxNode>;
 
       /**
        * Find the closest ancestor of the current node that matches the given type(s).
@@ -582,7 +583,7 @@ declare module "@lumine-code/node-tree-sitter" {
        * @returns The closest matching ancestor node, or null if none found
        * @throws If the argument is not a string or array of strings
        */
-      closest(types: String | Array<String>): SyntaxNode | null;
+      closest(types: string | Array<string>): SyntaxNode | null;
 
       /**
        * Create a new TreeCursor starting from this node.
@@ -624,20 +625,20 @@ declare module "@lumine-code/node-tree-sitter" {
       /** The end position of the current node */
       endPosition: Point;
 
-      /** The start byte index of the current node */
+      /** The start UTF-16 code-unit index of the current node */
       startIndex: number;
 
-      /** The end byte index of the current node */
+      /** The end UTF-16 code-unit index of the current node */
       endIndex: number;
 
       /** The current node that the cursor is pointing to */
       readonly currentNode: SyntaxNode;
 
       /** The field name of the current node */
-      readonly currentFieldName: string;
+      readonly currentFieldName: string | undefined;
 
       /** The numerical field ID of the current node */
-      readonly currentFieldId: number;
+      readonly currentFieldId: number | undefined;
 
       /** The depth of the current node relative to the node where the cursor was created */
       readonly currentDepth: number;
@@ -686,20 +687,20 @@ declare module "@lumine-code/node-tree-sitter" {
       gotoLastChild(): boolean;
 
       /**
-       * Move this cursor to the first child that extends beyond the given byte offset
+       * Move this cursor to the first child that extends beyond the given UTF-16 code-unit offset
        *
-       * @param goalIndex - The byte offset to search for
-       * @returns true if a child was found and cursor moved, false otherwise
+       * @param goalIndex - The UTF-16 code-unit offset to search for
+       * @returns The child index if the cursor moved, or null if no child was found
        */
-      gotoFirstChildForIndex(goalIndex: number): boolean;
+      gotoFirstChildForIndex(goalIndex: number): number | null;
 
       /**
        * Move this cursor to the first child that extends beyond the given position
        *
        * @param goalPosition - The position to search for
-       * @returns true if a child was found and cursor moved, false otherwise
+       * @returns The child index if the cursor moved, or null if no child was found
        */
-      gotoFirstChildForPosition(goalPosition: Point): boolean;
+      gotoFirstChildForPosition(goalPosition: Point): number | null;
 
       /**
        * Move this cursor to the next sibling of its current node
@@ -731,6 +732,10 @@ declare module "@lumine-code/node-tree-sitter" {
      * A tree that represents the syntactic structure of a source code file.
      */
     export interface Tree {
+      /** Text provider associated with this tree; mutable copies may attach updated text. */
+      input: string | Input;
+      /** The language used to parse this tree. */
+      language: Language;
       /** Create an independently editable shallow copy. */
       copy(): Tree;
       /**
@@ -742,21 +747,20 @@ declare module "@lumine-code/node-tree-sitter" {
        * Get the root node of the syntax tree, but with its position shifted
        * forward by the given offset.
        *
-       * @param offsetBytes - The number of bytes to shift by
+       * @param offsetIndex - The number of UTF-16 code units to shift by
        * @param offsetExtent - The number of rows/columns to shift by
        * @returns The root node with its position offset
        */
-      rootNodeWithOffset(offsetBytes: number, offsetExtent: Point): SyntaxNode;
+      rootNodeWithOffset(offsetIndex: number, offsetExtent: Point): SyntaxNode;
 
       /**
        * Edit the syntax tree to keep it in sync with source code that has been edited.
-       * The edit must be described both in terms of byte offsets and in terms of
+       * The edit must be described both in terms of UTF-16 code-unit offsets and in terms of
        * row/column coordinates.
        *
        * @param edit - The edit to apply to the tree
-       * @returns The edited tree
        */
-      edit(edit: Edit): Tree;
+      edit(edit: Edit): void;
 
       /**
        * Create a new TreeCursor starting from the root of the tree.
@@ -799,7 +803,7 @@ declare module "@lumine-code/node-tree-sitter" {
        *
        * @returns The edited range
        */
-      getEditedRange(): Range;
+      getEditedRange(): Range | undefined;
 
       /**
        * Print a graph of the tree in the DOT language.
@@ -807,13 +811,19 @@ declare module "@lumine-code/node-tree-sitter" {
        *
        * @param fd - Optional file descriptor for the output
        */
-      printDotGraph(fd?: number): void;
+      printDotGraph(fd?: number): this;
     }
 
     /**
      * A particular syntax node that was captured by a named pattern in a query.
      */
-    export interface QueryCapture {
+    export interface QueryProperties {
+      setProperties?: Record<string, string | null>;
+      assertedProperties?: Record<string, string | null>;
+      refutedProperties?: Record<string, string | null>;
+    }
+
+    export interface QueryCapture extends QueryProperties {
       /** The name that was used to capture the node in the query */
       name: string;
 
@@ -824,7 +834,7 @@ declare module "@lumine-code/node-tree-sitter" {
     /**
      * A match of a {@link Query} to a particular set of {@link SyntaxNode}s.
      */
-    export interface QueryMatch {
+    export interface QueryMatch extends QueryProperties {
       /**
        * The index of the pattern that was matched.
        * Each pattern in a query is assigned a numeric index in sequence.
@@ -842,13 +852,13 @@ declare module "@lumine-code/node-tree-sitter" {
       /** The ending row/column position in which the query will be executed. */
       endPosition?: Point;
 
-      /** The starting byte offset in which the query will be executed. */
+      /** The starting UTF-16 code-unit offset in which the query will be executed. */
       startIndex?: number;
 
-      /** The ending byte offset in which the query will be executed. */
+      /** The ending UTF-16 code-unit offset in which the query will be executed. */
       endIndex?: number;
 
-      /** The maximum number of in-progress matches for this cursor. The limit must be > 0 and <= 65536. */
+      /** The maximum number of in-progress matches for this cursor, from 0 to 4294967295. */
       matchLimit?: number;
 
       /**
@@ -871,7 +881,7 @@ declare module "@lumine-code/node-tree-sitter" {
        * The maximum duration in microseconds that query execution should be allowed to
        * take before halting.
        *
-       * If query execution takes longer than this, it will halt early, returning None.
+       * If query execution takes longer than this, it halts early and returns partial results.
        *
        * @deprecated Use the {@link progressCallback}
        */
@@ -880,7 +890,7 @@ declare module "@lumine-code/node-tree-sitter" {
       /**
        * A callback that receives the query state during execution.
        *
-       * @param index - The current byte offset
+       * @param index - The current UTF-16 code-unit offset
        *
        * @returns `true` to stop the query or `false` to continue
        */
@@ -896,8 +906,8 @@ declare module "@lumine-code/node-tree-sitter" {
        * patterns.
        *
        * The query is associated with a particular language, and can only be run
-       * on syntax nodes parsed with that language. References to Queries can be
-       * shared between multiple threads.
+       * on syntax nodes parsed with that language. Query objects belong to their
+       * owning Node.js environment and cannot be transferred between workers.
        */
       constructor(language: Language, source: string | Buffer);
 
@@ -1013,7 +1023,7 @@ declare module "@lumine-code/node-tree-sitter" {
       /**
        * Create a new lookahead iterator for this language and parse state.
        *
-       * This returns `null` if the state is invalid for this language.
+       * Construction throws if the state is invalid for this language.
        *
        * Iterating {@link LookaheadIterator} will yield valid symbols in the given
        * parse state. Newly created lookahead iterators will have {@link currentType}

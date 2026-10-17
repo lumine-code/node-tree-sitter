@@ -14,7 +14,9 @@ const immutableSnapshots = new WeakSet();
 const {rootNode, rootNodeWithOffset, edit, copy} = Tree.prototype;
 Tree.prototype.copy = function() {
   const tree = copy.call(this);
-  tree.input = this.input; tree.getText = this.getText; tree.language = this.language;
+  tree.input = this.input;
+  tree.getText = immutableSnapshots.has(this) ? getTextFromString : this.getText;
+  tree.language = this.language;
   return tree;
 };
 
@@ -595,7 +597,10 @@ Query.prototype._init = function() {
             `Arguments to \`#set!\` predicate must be a strings.".`
           );
           if (!setProperties[i]) setProperties[i] = {};
-          setProperties[i][steps[SECOND + 1]] = steps[THIRD] ? steps[THIRD + 1] : null;
+          Object.defineProperty(setProperties[i], steps[SECOND + 1], {
+            value: steps[THIRD] ? steps[THIRD + 1] : null,
+            enumerable: true, writable: true, configurable: true,
+          });
           break;
 
         case 'is?':
@@ -608,7 +613,10 @@ Query.prototype._init = function() {
           );
           const properties = operator === 'is?' ? assertedProperties : refutedProperties;
           if (!properties[i]) properties[i] = {};
-          properties[i][steps[SECOND + 1]] = steps[THIRD] ? steps[THIRD + 1] : null;
+          Object.defineProperty(properties[i], steps[SECOND + 1], {
+            value: steps[THIRD] ? steps[THIRD + 1] : null,
+            enumerable: true, writable: true, configurable: true,
+          });
           break;
 
         case 'not-any-of?':
@@ -663,10 +671,11 @@ Query.prototype.matches = function(
     progressCallback = undefined
   } = {}
 ) {
+  const startRow = startPosition.row, startColumn = startPosition.column;
+  const endRow = endPosition.row, endColumn = endPosition.column;
   marshalNode(node);
   const [returnedMatches, returnedNodes] = _matches.call(this, node.tree,
-    startPosition.row, startPosition.column,
-    endPosition.row, endPosition.column,
+    startRow, startColumn, endRow, endColumn,
     startIndex, endIndex, matchLimit, maxStartDepth, timeoutMicros, progressCallback
   );
   const nodes = unmarshalNodes(returnedNodes, node.tree);
@@ -714,11 +723,14 @@ Query.prototype.captures = function(
     progressCallback = undefined,
   } = {}
 ) {
+  const startRow = startPosition.row, startColumn = startPosition.column;
+  const endRow = endPosition.row, endColumn = endPosition.column;
+  const needsContext = this.predicates.map(predicates => predicates.length > 0);
   marshalNode(node);
   const [returnedMatches, returnedNodes] = _captures.call(this, node.tree,
-    startPosition.row, startPosition.column, endPosition.row, endPosition.column,
+    startRow, startColumn, endRow, endColumn,
     startIndex, endIndex, matchLimit, maxStartDepth, timeoutMicros, progressCallback,
-    this.predicates.map(predicates => predicates.length > 0)
+    needsContext
   );
   const nodes = unmarshalNodes(returnedNodes, node.tree);
   const results = [];
@@ -1008,4 +1020,8 @@ module.exports.loadLanguage = async (name, bytes) => {
   initializeLanguageNodeClasses(language);
   return language;
 };
-module.exports.BackgroundParser = require('./background-parser')(binding.BackgroundParser, tree => immutableSnapshots.add(tree));
+module.exports.BackgroundParser = require('./background-parser')(
+  binding.BackgroundParser,
+  tree => immutableSnapshots.add(tree),
+  language => { if (!language.nodeSubclasses) initializeLanguageNodeClasses(language); }
+);

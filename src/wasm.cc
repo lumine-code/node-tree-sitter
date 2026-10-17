@@ -76,6 +76,23 @@ struct ParserState {
   }
 };
 
+// Reserve the parser before reading JS properties, which can re-enter or close
+// it. A failed submission releases the reservation and any deferred close.
+struct ParseReservation {
+  std::shared_ptr<ParserState> state;
+  bool queued = false;
+  explicit ParseReservation(std::shared_ptr<ParserState> value) : state(std::move(value)) {
+    state->busy = true;
+    state->cancelled.store(false, std::memory_order_relaxed);
+  }
+  ~ParseReservation() {
+    if (!queued) {
+      state->busy = false;
+      state->ReleaseClosedParser();
+    }
+  }
+};
+
 class ParseJob final : public Napi::AsyncWorker {
  public:
   ParseJob(Napi::Env env, std::shared_ptr<ParserState> state, std::u16string text, TSTree *old_tree)
@@ -168,6 +185,7 @@ class BackgroundParser final : public Napi::ObjectWrap<BackgroundParser> {
     auto env = info.Env();
     if (state->closed) throw Napi::Error::New(env, "Parser is closed");
     if (state->busy) throw Napi::Error::New(env, "Parser already has an active parse");
+    ParseReservation reservation(state);
     if (!info[0].IsString()) throw Napi::TypeError::New(env, "Background parsing requires a string snapshot");
     std::u16string text = info[0].As<Napi::String>().Utf16Value();
     if (text.size() > UINT32_MAX / 2) throw Napi::RangeError::New(env, "Input exceeds Tree-sitter's offset limit");
@@ -188,14 +206,16 @@ class BackgroundParser final : public Napi::ObjectWrap<BackgroundParser> {
         ranges.push_back(range.Unwrap());
       }
     }
+    if (state->closed) throw Napi::Error::New(env, "Parser is closed");
+    if (state->cancelled.load(std::memory_order_relaxed)) throw AbortError(env);
     if (!ts_parser_set_included_ranges(state->parser, ranges.data(), static_cast<uint32_t>(ranges.size()))) {
       throw Napi::RangeError::New(env, "Invalid included ranges");
     }
-    auto *job = new ParseJob(env, state, std::move(text), old ? ts_tree_copy(old->tree_) : nullptr);
-    state->cancelled.store(false, std::memory_order_relaxed);
-    state->busy = true;
+    auto job = std::make_unique<ParseJob>(env, state, std::move(text), old ? ts_tree_copy(old->tree_) : nullptr);
     auto promise = job->deferred.Promise();
     job->Queue();
+    job.release();
+    reservation.queued = true;
     return promise;
   }
   Napi::Value Cancel(const Napi::CallbackInfo &info) {
@@ -238,9 +258,10 @@ void InitWasm(Napi::Env env, Napi::Object exports) {
     if (name.empty() || name.find('\0') != std::string::npos) throw Napi::TypeError::New(info.Env(), "Invalid language name");
     auto bytes = info[1].As<Napi::Buffer<uint8_t>>();
     if (bytes.Length() > UINT32_MAX) throw Napi::RangeError::New(info.Env(), "Wasm module is too large");
-    auto *job = new LoadLanguageJob(info.Env(), std::move(name), bytes);
+    auto job = std::make_unique<LoadLanguageJob>(info.Env(), std::move(name), bytes);
     auto promise = job->deferred.Promise();
     job->Queue();
+    job.release();
     return promise;
   }));
   BackgroundParser::Init(env, exports);

@@ -12,6 +12,8 @@ class Logger final {
   static TSLogger Make(const Napi::Function &);
   Napi::FunctionReference func;
   static void Log(void *, TSLogType, const char *);
+ private:
+  static void LogImpl(void *, TSLogType, const char *);
 };
 
 } // namespace node_tree_sitter

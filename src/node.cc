@@ -499,7 +499,7 @@ Napi::Value Child(const Napi::CallbackInfo &info) {
     if (!info[1].IsNumber()) {
       throw TypeError::New(env, "Second argument must be an integer");
     }
-    uint32_t index = info[1].As<Number>().Uint32Value();
+    uint32_t index = UnsignedInteger(info[1], UINT32_MAX, "Child index");
     return MarshalNode(info, tree, ts_node_child(node, index));
   }
   return MarshalNullNode(env);
@@ -526,7 +526,7 @@ Napi::Value NamedChild(const Napi::CallbackInfo &info) {
     if (!info[1].IsNumber()) {
       throw TypeError::New(env, "Second argument must be an integer");
     }
-    uint32_t index = info[1].As<Number>().Uint32Value();
+    uint32_t index = UnsignedInteger(info[1], UINT32_MAX, "Child index");
     return MarshalNode(info, tree, ts_node_named_child(node, index));
   }
   return MarshalNullNode(env);
@@ -568,7 +568,7 @@ Napi::Value ChildForFieldId(const Napi::CallbackInfo &info) {
     if (!info[1].IsNumber()) {
       throw TypeError::New(env, "Second argument must be an integer");
     }
-    uint32_t field_id = info[1].As<Number>().Uint32Value();
+    TSFieldId field_id = static_cast<TSFieldId>(UnsignedInteger(info[1], UINT16_MAX, "Field ID"));
     return MarshalNode(info, tree, ts_node_child_by_field_id(node, field_id));
   }
   return MarshalNullNode(env);
@@ -582,7 +582,7 @@ Napi::Value FieldNameForChild(const Napi::CallbackInfo &info) {
     if (!info[1].IsNumber()) {
       throw TypeError::New(env, "Second argument must be an integer");
     }
-    uint32_t child_id = info[1].As<Number>().Uint32Value();
+    uint32_t child_id = UnsignedInteger(info[1], UINT32_MAX, "Child index");
     const char *field_name = ts_node_field_name_for_child(node, child_id);
     if (field_name != nullptr) {
       return String::New(env, field_name);
@@ -599,7 +599,7 @@ Napi::Value FieldNameForNamedChild(const Napi::CallbackInfo &info) {
     if (!info[1].IsNumber()) {
       throw TypeError::New(env, "Second argument must be an integer");
     }
-    uint32_t child_id = info[1].As<Number>().Uint32Value();
+    uint32_t child_id = UnsignedInteger(info[1], UINT32_MAX, "Child index");
     const char *field_name = ts_node_field_name_for_named_child(node, child_id);
     if (field_name != nullptr) {
       return String::New(env, field_name);
@@ -653,92 +653,42 @@ Napi::Value NamedChildren(const Napi::CallbackInfo &info) {
   return MarshalNodes(info, tree, result.data(), result.size());
 }
 
+// All JS argument reads finish before this traversal. Reuse the environment's
+// scratch cursor, whose storage is released on environment teardown.
+Napi::Value ChildrenForField(const Napi::CallbackInfo &info, const Tree *tree, TSNode node, TSFieldId field_id) {
+  auto *cursor = &info.Env().GetInstanceData<AddonData>()->scratch_cursor;
+  vector<TSNode> result;
+  if (field_id) {
+    ts_tree_cursor_reset(cursor, node);
+    if (ts_tree_cursor_goto_first_child(cursor)) {
+      do {
+        if (ts_tree_cursor_current_field_id(cursor) == field_id) {
+          result.push_back(ts_tree_cursor_current_node(cursor));
+        }
+      } while (ts_tree_cursor_goto_next_sibling(cursor));
+    }
+  }
+  return MarshalNodes(info, tree, result.data(), result.size());
+}
+
 Napi::Value ChildrenForFieldName(const Napi::CallbackInfo &info) {
   Env env = info.Env();
   const Tree *tree = Tree::UnwrapTree(info[0]);
   TSNode node = UnmarshalNode(env, tree);
-  if (node.id == nullptr) {
-    return env.Undefined();
-  }
-
-  if (!info[1].IsString()) {
-    throw TypeError::New(env, "First argument must be a string");
-  }
+  if (node.id == nullptr) return env.Undefined();
+  if (!info[1].IsString()) throw TypeError::New(env, "First argument must be a string");
   std::string field_name = info[1].As<String>().Utf8Value();
-
-  TSTreeCursor cursor = ts_tree_cursor_new(node);
-
-  const TSLanguage *language = ts_tree_language(node.tree);
-  TSFieldId field_id = ts_language_field_id_for_name(language, field_name.c_str(), field_name.length());
-
-  bool done = field_id == 0;
-  if (!done) {
-    ts_tree_cursor_reset(&cursor, node);
-    ts_tree_cursor_goto_first_child(&cursor);
-  }
-
-  vector<TSNode> result;
-  while (!done) {
-    while (ts_tree_cursor_current_field_id(&cursor) != field_id) {
-      if (!ts_tree_cursor_goto_next_sibling(&cursor)) {
-        done = true;
-        break;
-      }
-    }
-    if (done) {
-      break;
-    }
-    TSNode result_node = ts_tree_cursor_current_node(&cursor);
-    if (!ts_tree_cursor_goto_next_sibling(&cursor)) {
-      done = true;
-    }
-    result.push_back(result_node);
-  }
-
-  return MarshalNodes(info, tree, result.data(), result.size());
+  TSFieldId field_id = ts_language_field_id_for_name(ts_tree_language(node.tree), field_name.c_str(), field_name.length());
+  return ChildrenForField(info, tree, node, field_id);
 }
 
 Napi::Value ChildrenForFieldId(const Napi::CallbackInfo &info) {
   Env env = info.Env();
   const Tree *tree = Tree::UnwrapTree(info[0]);
   TSNode node = UnmarshalNode(env, tree);
-  if (node.id == nullptr) {
-    return env.Undefined();
-  }
-
-  if (!info[1].IsNumber()) {
-    throw TypeError::New(env, "First argument must be an integer");
-  }
-  uint32_t field_id = info[1].As<Number>().Uint32Value();
-
-
-  TSTreeCursor cursor = ts_tree_cursor_new(node);
-
-  bool done = field_id == 0;
-  if (!done) {
-    ts_tree_cursor_reset(&cursor, node);
-    ts_tree_cursor_goto_first_child(&cursor);
-  }
-
-  vector<TSNode> result;
-  while (!done) {
-    while (ts_tree_cursor_current_field_id(&cursor) != field_id) {
-      if (!ts_tree_cursor_goto_next_sibling(&cursor)) {
-        done = true;
-        break;
-      }
-    }
-    if (done) {
-      break;
-    }
-    TSNode result_node = ts_tree_cursor_current_node(&cursor);
-    if (!ts_tree_cursor_goto_next_sibling(&cursor)) {
-      done = true;
-    }
-    result.push_back(result_node);
-  }
-
-  return MarshalNodes(info, tree, result.data(), result.size());
+  if (node.id == nullptr) return env.Undefined();
+  TSFieldId field_id = static_cast<TSFieldId>(UnsignedInteger(info[1], UINT16_MAX, "Field ID"));
+  return ChildrenForField(info, tree, node, field_id);
 }
 
 Napi::Value FirstChild(const Napi::CallbackInfo &info) {

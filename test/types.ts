@@ -11,7 +11,29 @@ async function exercise(bytes: Buffer) {
     revision: 2,
   });
   const copy: Parser.Tree = after.copy();
-  new Parser.Query(language, "(identifier) @name").captures(copy.rootNode);
+  copy.input = "updated;";
+  const captures = new Parser.Query(language, "(identifier) @name").captures(copy.rootNode);
+  const property: string | null | undefined = captures[0]?.setProperties?.role;
+  const cursor = copy.walk();
+  const child: number | null = cursor.gotoFirstChildForIndex(0);
+  const positionChild: number | null = cursor.gotoFirstChildForPosition({ row: 0, column: 0 });
+  const field: string | undefined = cursor.currentFieldName;
+  const fieldId: number | undefined = cursor.currentFieldId;
+  const edited: Parser.Range | undefined = copy.getEditedRange();
+  const sync = new Parser().setLanguage(language).setTimeoutMicros(0).reset().setLogger(null);
+  const currentLanguage: Parser.Language | null = sync.getLanguage();
+  const logger: Parser.Logger | null = sync.getLogger();
+  // @ts-expect-error A cursor search returns an index or null, not a boolean.
+  const booleanChild: boolean = cursor.gotoFirstChildForIndex(0);
+  // @ts-expect-error Snapshots own immutable input.
+  after.input = "changed";
+  // @ts-expect-error Background previous trees must be snapshots, not mutable copies.
+  await parser.parse("updated;", { previous: copy });
+  // @ts-expect-error setLanguage requires a descriptor.
+  sync.setLanguage();
+  // @ts-expect-error A string is not a logger.
+  sync.setLogger("debug");
+  void [property, child, positionChild, field, fieldId, edited, currentLanguage, logger, booleanChild];
   parser.close();
 }
 void exercise;

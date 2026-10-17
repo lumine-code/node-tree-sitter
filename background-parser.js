@@ -74,57 +74,82 @@ function validateRanges(ranges, text) {
   let offset = 0,
     position = { row: 0, column: 0 };
   let previousEnd = 0;
+  const normalized = [];
   for (const range of ranges) {
-    index(range.startIndex, "range.startIndex", text.length);
-    index(range.endIndex, "range.endIndex", text.length);
-    if (range.startIndex < previousEnd || range.endIndex < range.startIndex) {
+    const { startIndex, endIndex, startPosition, endPosition } = range;
+    index(startIndex, "range.startIndex", text.length);
+    index(endIndex, "range.endIndex", text.length);
+    if (startIndex < previousEnd || endIndex < startIndex) {
       throw new RangeError("includedRanges must be ordered and non-overlapping");
     }
+    const copy = { startIndex, endIndex };
     for (const endpoint of ["start", "end"]) {
-      const next = range[`${endpoint}Index`];
+      const next = copy[`${endpoint}Index`];
       const actual = advanceText(text, offset, next, position);
       offset = next;
       position = actual;
-      const supplied = range[`${endpoint}Position`];
+      const supplied = endpoint === "start" ? startPosition : endPosition;
       if (actual.row !== supplied?.row || actual.column !== supplied?.column) {
         throw new RangeError("Range positions must match UTF-16 indices in the snapshot");
       }
+      copy[`${endpoint}Position`] = actual;
     }
-    previousEnd = range.endIndex;
+    previousEnd = endIndex;
+    normalized.push(copy);
   }
+  return normalized;
 }
 
-module.exports = (NativeParser, published = () => {}) =>
-  class BackgroundParser {
+module.exports = (NativeParser, published = () => {}, initialize = () => {}) => {
+  const snapshots = new WeakSet();
+  return class BackgroundParser {
     #native;
     #language;
     #busy = false;
     #closed = false;
+    #cancelled = false;
     constructor(language) {
       this.#native = new NativeParser(language);
+      initialize(language);
       this.#language = language;
     }
-    async parse(text, { previous = null, edits = [], includedRanges, signal, revision = 0 } = {}) {
+    async parse(text, options = {}) {
       if (this.#closed) throw new Error("Parser is closed");
       if (this.#busy) throw new Error("Parser already has an active parse");
-      if (typeof text !== "string") throw new TypeError("Background parsing requires a string snapshot");
-      index(text.length, "text length");
-      index(revision, "revision", Number.MAX_SAFE_INTEGER);
-      if (!Array.isArray(edits)) throw new TypeError("edits must be an array");
-      if (
-        signal != null &&
-        ["throwIfAborted", "addEventListener", "removeEventListener"].some((name) => typeof signal[name] !== "function")
-      ) {
-        throw new TypeError("signal must be an AbortSignal");
-      }
-      signal?.throwIfAborted();
-      validateRanges(includedRanges, text);
-      const oldTree = preparePrevious(previous, edits, text, this.#language);
-      const cancel = () => this.#native.cancel();
       this.#busy = true;
+      this.#cancelled = false;
+      let signal;
+      let listening = false;
+      const cancel = () => this.#native.cancel();
       try {
+        const { previous = null, edits = [], includedRanges, revision = 0 } = options;
+        signal = options.signal;
+        if (typeof text !== "string") throw new TypeError("Background parsing requires a string snapshot");
+        index(text.length, "text length");
+        index(revision, "revision", Number.MAX_SAFE_INTEGER);
+        if (!Array.isArray(edits)) throw new TypeError("edits must be an array");
+        if (
+          signal != null &&
+          ["throwIfAborted", "addEventListener", "removeEventListener"].some(
+            (name) => typeof signal[name] !== "function",
+          )
+        ) {
+          throw new TypeError("signal must be an AbortSignal");
+        }
+        signal?.throwIfAborted();
+        const ranges = validateRanges(includedRanges, text);
+        if (previous !== null && !snapshots.has(previous))
+          throw new TypeError("previous must be an immutable background snapshot");
+        const oldTree = preparePrevious(previous, edits, text, this.#language);
+        listening = signal != null;
         signal?.addEventListener("abort", cancel, { once: true });
-        const tree = await this.#native.parse(text, oldTree, includedRanges);
+        signal?.throwIfAborted();
+        if (this.#cancelled) {
+          const error = new Error("Parsing was cancelled");
+          error.name = "AbortError";
+          throw error;
+        }
+        const tree = await this.#native.parse(text, oldTree, ranges);
         signal?.throwIfAborted();
         Object.defineProperties(tree, {
           input: { value: text },
@@ -137,14 +162,16 @@ module.exports = (NativeParser, published = () => {}) =>
             },
           },
         });
+        snapshots.add(tree);
         published(tree);
         return tree;
       } finally {
         this.#busy = false;
-        signal?.removeEventListener("abort", cancel);
+        if (listening) signal.removeEventListener("abort", cancel);
       }
     }
     cancel() {
+      if (this.#busy) this.#cancelled = true;
       this.#native.cancel();
     }
     close() {
@@ -161,3 +188,4 @@ module.exports = (NativeParser, published = () => {}) =>
       this.close();
     }
   };
+};

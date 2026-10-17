@@ -10,6 +10,13 @@ using std::string;
 namespace node_tree_sitter {
 
 void Logger::Log(void *payload, TSLogType type, const char *message_str) {
+  auto env = static_cast<Logger *>(payload)->func.Env();
+  if (env.IsExceptionPending()) return;
+  try { LogImpl(payload, type, message_str); }
+  catch (const Error &error) { error.ThrowAsJavaScriptException(); }
+}
+
+void Logger::LogImpl(void *payload, TSLogType type, const char *message_str) {
   auto *debugger = static_cast<Logger *>(payload);
   Env env = debugger->func.Env();
 
