@@ -24,6 +24,7 @@ jobs:
       - run: npm run setup:wasmtime
       - run: npm ci
       - run: npm run lint
+      - run: npm run check:types
       - run: npm test
       - run: xvfb-run -a npm run test:electron
         if: runner.os == 'Linux'

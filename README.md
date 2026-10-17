@@ -15,7 +15,7 @@ Fork of [tree-sitter/node-tree-sitter](https://github.com/tree-sitter/node-tree-
 
 ## Building
 
-Requires Node.js 24.18 or newer, a C/C++ toolchain supported by node-gyp, Python and `tar`. The editor and its dependencies do not need to be changed to build or test this repository.
+Requires Node.js 24.18 or newer, a C/C++ toolchain supported by node-gyp, Python and `tar`. The native Tree-sitter runtime is pinned to 0.27.1. The editor and its dependencies do not need to be changed to build or test this repository.
 
 ```sh
 git clone --recurse-submodules https://github.com/lumine-code/node-tree-sitter.git

@@ -75,23 +75,31 @@ module.exports = (NativeParser) =>
     #native;
     #language;
     #busy = false;
+    #closed = false;
     constructor(language) {
       this.#native = new NativeParser(language);
       this.#language = language;
     }
     async parse(text, { previous = null, edits = [], includedRanges, signal, revision = 0 } = {}) {
+      if (this.#closed) throw new Error("Parser is closed");
       if (this.#busy) throw new Error("Parser already has an active parse");
       if (typeof text !== "string") throw new TypeError("Background parsing requires a string snapshot");
       index(text.length, "text length");
       index(revision, "revision", Number.MAX_SAFE_INTEGER);
       if (!Array.isArray(edits)) throw new TypeError("edits must be an array");
+      if (
+        signal != null &&
+        ["throwIfAborted", "addEventListener", "removeEventListener"].some((name) => typeof signal[name] !== "function")
+      ) {
+        throw new TypeError("signal must be an AbortSignal");
+      }
       signal?.throwIfAborted();
       validateRanges(includedRanges, text);
       const oldTree = preparePrevious(previous, edits, text, this.#language);
       const cancel = () => this.#native.cancel();
       this.#busy = true;
-      signal?.addEventListener("abort", cancel, { once: true });
       try {
+        signal?.addEventListener("abort", cancel, { once: true });
         const tree = await this.#native.parse(text, oldTree, includedRanges);
         signal?.throwIfAborted();
         Object.defineProperties(tree, {
@@ -107,14 +115,24 @@ module.exports = (NativeParser) =>
         });
         return tree;
       } finally {
-        signal?.removeEventListener("abort", cancel);
         this.#busy = false;
+        signal?.removeEventListener("abort", cancel);
       }
     }
     cancel() {
       this.#native.cancel();
     }
     close() {
+      this.#closed = true;
       this.#native.close();
+    }
+    get closed() {
+      return this.#closed;
+    }
+    get busy() {
+      return this.#busy;
+    }
+    [Symbol.dispose]() {
+      this.close();
     }
   };

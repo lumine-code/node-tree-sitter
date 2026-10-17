@@ -63,9 +63,10 @@
     "rebuild": "node-gyp rebuild",
     "test": "node script/test.js",
     "setup:wasmtime": "node script/setup-wasmtime.js",
-    "lint": "eslint background-parser.js script test/wasm_test.js benchmark",
+    "lint": "eslint background-parser.js script test/api_test.js test/wasm_test.js benchmark",
     "benchmark": "node benchmark/wasm.js",
-    "test:electron": "node script/electron-test.js"
+    "test:electron": "node script/electron-test.js",
+    "check:types": "tsc --ignoreConfig --noEmit --strict --module node16 --target es2022 test/types.ts"
   },
   "bugs": "https://github.com/lumine-code/node-tree-sitter/issues",
   "engines": {

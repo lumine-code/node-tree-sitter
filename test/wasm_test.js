@@ -156,6 +156,28 @@ test("close cancels pending work and rejects future requests", async () => {
   await assert.rejects(parser.parse("x;"), /closed/);
 });
 
+test("closed parsers release their store without invalidating delivered snapshots", async () => {
+  const parser = new Parser.BackgroundParser(javascript);
+  const tree = await parser.parse("const keep = 1;");
+  parser.close();
+  parser.close();
+  assert.equal(tree.rootNode.text, "const keep = 1;");
+  assert.deepEqual(
+    new Parser.Query(javascript, "(identifier) @name").captures(tree.rootNode).map((c) => c.node.text),
+    ["keep"],
+  );
+  await assert.rejects(parser.parse("x;"), /closed/);
+});
+
+test("a language load owns its bytes before asynchronous compilation", async () => {
+  const input = bytes("json");
+  const pending = Parser.loadLanguage("json", input);
+  input.fill(0);
+  const parser = new Parser.BackgroundParser(await pending);
+  assert.equal((await parser.parse("{}")).rootNode.hasError, false);
+  parser.close();
+});
+
 test("one parser rejects concurrent requests while separate parsers are independent", async () => {
   const a = new Parser.BackgroundParser(javascript),
     b = new Parser.BackgroundParser(javascript);

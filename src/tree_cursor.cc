@@ -2,6 +2,7 @@
 #include "./node.h"
 #include "./tree.h"
 #include "./tree_cursor.h"
+#include "./operation.h"
 #include "tree_sitter/api.h"
 
 #include <napi.h>
@@ -9,6 +10,7 @@
 using namespace Napi;
 
 namespace node_tree_sitter {
+const napi_type_tag CURSOR_TYPE_TAG = {0x8AF2E5212AD58ABF, 0x74D129BDB563F012};
 
 void TreeCursor::Init(Napi::Env env, Napi::Object exports) {
   auto *data = env.GetInstanceData<AddonData>();
@@ -48,12 +50,18 @@ void TreeCursor::Init(Napi::Env env, Napi::Object exports) {
 Napi::Value TreeCursor::NewInstance(Napi::Env env, TSTreeCursor cursor) {
   auto *data = env.GetInstanceData<AddonData>();
 
+  OperationGuard construction(data->constructing_cursor);
   Object self = data->tree_cursor_constructor.New({});
   TreeCursor::Unwrap(self)->cursor_ = cursor;
   return self;
 }
 
-TreeCursor::TreeCursor(const Napi::CallbackInfo& info) : Napi::ObjectWrap<TreeCursor>(info), cursor_() {}
+TreeCursor::TreeCursor(const Napi::CallbackInfo& info) : Napi::ObjectWrap<TreeCursor>(info), cursor_() {
+  if (!info.Env().GetInstanceData<AddonData>()->constructing_cursor) {
+    throw TypeError::New(info.Env(), "Cursors are created by walking a syntax node");
+  }
+  Value().TypeTag(&CURSOR_TYPE_TAG);
+}
 
 TreeCursor::~TreeCursor() { ts_tree_cursor_delete(&cursor_); }
 
@@ -148,7 +156,7 @@ Napi::Value TreeCursor::Reset(const Napi::CallbackInfo &info) {
 Napi::Value TreeCursor::ResetTo(const Napi::CallbackInfo &info) {
   auto *data = info.Env().GetInstanceData<AddonData>();
   if (!info[0].IsObject() ||
-      !info[0].As<Object>().InstanceOf(data->tree_cursor_constructor.Value())) {
+      !info[0].As<Object>().CheckTypeTag(&CURSOR_TYPE_TAG)) {
     Napi::TypeError::New(info.Env(), "Argument must be a TreeCursor").ThrowAsJavaScriptException();
     return info.Env().Undefined();
   }

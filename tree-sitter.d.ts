@@ -1,3 +1,4 @@
+/// <reference types="node" />
 /** @module */
 declare module "@lumine-code/node-tree-sitter" {
   class Parser {
@@ -21,7 +22,7 @@ declare module "@lumine-code/node-tree-sitter" {
      *
      * @throws May fail if no language has been set or parsing was halted.
      */
-    parse(input: string | Parser.Input, oldTree?: Parser.Tree | null, options?: Parser.Options): Parser.Tree;
+    parse(input: string | Parser.Input, oldTree?: Parser.Tree | null, options?: Parser.Options): Parser.Tree | null;
 
     /**
      * Get the ranges of text that the parser will include when parsing.
@@ -124,6 +125,9 @@ declare module "@lumine-code/node-tree-sitter" {
     }
     export class BackgroundParser {
       constructor(language: Language);
+      readonly closed: boolean;
+      readonly busy: boolean;
+      [Symbol.dispose](): void;
       parse(text: string, options?: BackgroundParseOptions): Promise<Snapshot>;
       cancel(): void;
       close(): void;

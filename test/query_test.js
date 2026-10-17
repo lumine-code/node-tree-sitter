@@ -1,5 +1,5 @@
 /// <reference path="../tree-sitter.d.ts" />
-/** @type {typeof import("tree-sitter")} */
+/** @type {typeof import("@lumine-code/node-tree-sitter")} */
 const Parser = require("../index.js");
 
 const C = require("tree-sitter-c");

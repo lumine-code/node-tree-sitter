@@ -18,6 +18,7 @@ private:
   TSParser *parser_;
   uint64_t timeout_micros_ = 0;
   bool wasm_store_attached_ = false;
+  bool parsing_ = false;
 
   Napi::Value SetLanguage(const Napi::CallbackInfo &);
   Napi::Value Parse(const Napi::CallbackInfo &);

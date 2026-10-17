@@ -1,6 +1,8 @@
 #include "./query.h"
 #include "./language.h"
 #include "./node.h"
+#include "./operation.h"
+#include <memory>
 
 #include <napi.h>
 #include <string>
@@ -42,13 +44,16 @@ class CallbackProgress final {
     auto *self = static_cast<CallbackProgress *>(state->payload);
     if (self->timeout && std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - self->start).count() >= self->timeout) return true;
     if (self->func.IsEmpty()) return false;
-    return self->func({Number::New(self->func.Env(), state->current_byte_offset)}).As<Boolean>();
+    auto env = self->func.Env();
+    if (env.IsExceptionPending()) return true;
+    try { return self->func({Number::New(env, state->current_byte_offset / 2)}).As<Boolean>(); }
+    catch (const Napi::Error &error) { error.ThrowAsJavaScriptException(); return true; }
   }
 };
 
 void Query::Init(Napi::Env env, Napi::Object exports) {
   auto *data = env.GetInstanceData<AddonData>();
-  data->ts_query_cursor = ts_query_cursor_new();
+
 
   Function ctor = DefineClass(env, "Query", {
     InstanceAccessor("matchLimit", &Query::MatchLimit, nullptr, napi_default_method),
@@ -101,13 +106,16 @@ Query::Query(const Napi::CallbackInfo &info) : Napi::ObjectWrap<Query>(info) , q
     throw Error::New(env, "Missing source argument");
   }
 
-  if (error_offset > 0) {
+  if (!query_) {
     const char *error_name = query_error_names[error_type];
     std::string message = "Query error of type ";
     message += error_name;
     message += " at position ";
     message += std::to_string(error_offset);
-    throw Error::New(env, message.c_str());
+    auto error = Error::New(env, message.c_str());
+    error.Set("offset", Number::New(env, error_offset));
+    error.Set("kind", Number::New(env, static_cast<int>(error_type)));
+    throw error;
   }
 
   info.This().As<Napi::Object>().Get("_init").As<Napi::Function>().Call(info.This(), {});
@@ -181,6 +189,10 @@ Napi::Value Query::GetPredicates(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value Query::Matches(const Napi::CallbackInfo &info) {
+  if (executing_) throw Error::New(info.Env(), "Cannot re-enter an active query");
+  OperationGuard operation(executing_);
+  std::unique_ptr<TSQueryCursor, decltype(&ts_query_cursor_delete)> owned_cursor(ts_query_cursor_new(), ts_query_cursor_delete);
+  auto *cursor = owned_cursor.get();
   Napi::Env env = info.Env();
   auto *data = env.GetInstanceData<AddonData>();
   Query *query = Query::UnwrapQuery(info.This());
@@ -202,7 +214,7 @@ Napi::Value Query::Matches(const Napi::CallbackInfo &info) {
     end_column = info[4].As<Number>().Uint32Value() << 1;
   }
   if (info.Length() > 5 && info[5].IsNumber()) {
-    start_index = info[5].As<Number>().Uint32Value();
+    start_index = info[5].As<Number>().Uint32Value() << 1;
   }
   if (info.Length() > 6 && info[6].IsNumber()) {
     end_index = info[6].As<Number>().Uint32Value() << 1;
@@ -229,22 +241,22 @@ Napi::Value Query::Matches(const Napi::CallbackInfo &info) {
   TSNode root_node = node_methods::UnmarshalNode(env, tree);
   TSPoint start_point = {start_row, start_column};
   TSPoint end_point = {end_row, end_column};
-  ts_query_cursor_set_point_range(data->ts_query_cursor, start_point, end_point);
-  ts_query_cursor_set_byte_range(data->ts_query_cursor, start_index, end_index);
-  ts_query_cursor_set_match_limit(data->ts_query_cursor, match_limit);
-  ts_query_cursor_set_max_start_depth(data->ts_query_cursor, max_start_depth);
+  ts_query_cursor_set_point_range(cursor, start_point, end_point);
+  ts_query_cursor_set_byte_range(cursor, start_index, end_index);
+  ts_query_cursor_set_match_limit(cursor, match_limit);
+  ts_query_cursor_set_max_start_depth(cursor, max_start_depth);
   CallbackProgress progress;
   progress.timeout = timeout_micros;
   if (info.Length() > 10 && info[10].IsFunction()) progress.func = Napi::Persistent(info[10].As<Function>());
   TSQueryCursorOptions options{&progress, CallbackProgress::Cancel};
-  ts_query_cursor_exec_with_options(data->ts_query_cursor, ts_query, root_node, &options);
+  ts_query_cursor_exec_with_options(cursor, ts_query, root_node, &options);
 
   Array js_matches = Array::New(env);
   unsigned index = 0;
   vector<TSNode> nodes;
   TSQueryMatch match;
 
-  while (ts_query_cursor_next_match(data->ts_query_cursor, &match)) {
+  while (ts_query_cursor_next_match(cursor, &match)) {
     js_matches[index++] = Number::New(env, match.pattern_index);
 
     for (uint16_t i = 0; i < match.capture_count; i++) {
@@ -262,6 +274,9 @@ Napi::Value Query::Matches(const Napi::CallbackInfo &info) {
     }
   }
 
+  last_match_limit_ = ts_query_cursor_match_limit(cursor);
+  last_exceeded_match_limit_ = ts_query_cursor_did_exceed_match_limit(cursor);
+  if (env.IsExceptionPending()) return env.Undefined();
   auto js_nodes = node_methods::GetMarshalNodes(info, tree, nodes.data(), nodes.size());
 
   auto result = Array::New(env);
@@ -271,6 +286,10 @@ Napi::Value Query::Matches(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
+  if (executing_) throw Error::New(info.Env(), "Cannot re-enter an active query");
+  OperationGuard operation(executing_);
+  std::unique_ptr<TSQueryCursor, decltype(&ts_query_cursor_delete)> owned_cursor(ts_query_cursor_new(), ts_query_cursor_delete);
+  auto *cursor = owned_cursor.get();
   Napi::Env env = info.Env();
   auto *data = env.GetInstanceData<AddonData>();
   Query *query = Query::UnwrapQuery(info.This());
@@ -292,7 +311,7 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
     end_column = info[4].As<Number>().Uint32Value() << 1;
   }
   if (info.Length() > 5 && info[5].IsNumber()) {
-    start_index = info[5].As<Number>().Uint32Value();
+    start_index = info[5].As<Number>().Uint32Value() << 1;
   }
   if (info.Length() > 6 && info[6].IsNumber()) {
     end_index = info[6].As<Number>().Uint32Value() << 1;
@@ -319,14 +338,15 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
   TSNode root_node = node_methods::UnmarshalNode(env, tree);
   TSPoint start_point = {start_row, start_column};
   TSPoint end_point = {end_row, end_column};
-  ts_query_cursor_set_point_range(data->ts_query_cursor, start_point, end_point);
-  ts_query_cursor_set_byte_range(data->ts_query_cursor, start_index, end_index);
-  ts_query_cursor_set_match_limit(data->ts_query_cursor, match_limit);
-  ts_query_cursor_set_max_start_depth(data->ts_query_cursor, max_start_depth);
+  ts_query_cursor_set_point_range(cursor, start_point, end_point);
+  ts_query_cursor_set_byte_range(cursor, start_index, end_index);
+  ts_query_cursor_set_match_limit(cursor, match_limit);
+  ts_query_cursor_set_max_start_depth(cursor, max_start_depth);
   CallbackProgress progress;
   progress.timeout = timeout_micros;
+  if (info.Length() > 10 && info[10].IsFunction()) progress.func = Napi::Persistent(info[10].As<Function>());
   TSQueryCursorOptions options{&progress, CallbackProgress::Cancel};
-  ts_query_cursor_exec_with_options(data->ts_query_cursor, ts_query, root_node, &options);
+  ts_query_cursor_exec_with_options(cursor, ts_query, root_node, &options);
 
   Array js_matches = Array::New(env);
   unsigned index = 0;
@@ -335,7 +355,7 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
   uint32_t capture_index;
 
   while (ts_query_cursor_next_capture(
-    data->ts_query_cursor,
+    cursor,
     &match,
     &capture_index
   )) {
@@ -358,6 +378,9 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
     }
   }
 
+  last_match_limit_ = ts_query_cursor_match_limit(cursor);
+  last_exceeded_match_limit_ = ts_query_cursor_did_exceed_match_limit(cursor);
+  if (env.IsExceptionPending()) return env.Undefined();
   auto js_nodes = node_methods::GetMarshalNodes(info, tree, nodes.data(), nodes.size());
 
   auto result = Array::New(env);
@@ -367,6 +390,7 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value Query::DisableCapture(const Napi::CallbackInfo &info) {
+  if (executing_) throw Error::New(info.Env(), "Cannot modify an active query");
   std::string string = info[0].As<String>().Utf8Value();
   const char *capture_name = string.c_str();
   ts_query_disable_capture(query_, capture_name, string.length());
@@ -374,6 +398,7 @@ Napi::Value Query::DisableCapture(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value Query::DisablePattern(const Napi::CallbackInfo &info) {
+  if (executing_) throw Error::New(info.Env(), "Cannot modify an active query");
   uint32_t pattern_index = info[0].As<Number>().Uint32Value();
   ts_query_disable_pattern(query_, pattern_index);
   return info.Env().Undefined();
@@ -406,12 +431,12 @@ Napi::Value Query::EndIndexForPattern(const Napi::CallbackInfo &info) {
 
 Napi::Value Query::DidExceedMatchLimit(const Napi::CallbackInfo &info) {
   auto *data = info.Env().GetInstanceData<AddonData>();
-  return Boolean::New(info.Env(), ts_query_cursor_did_exceed_match_limit(data->ts_query_cursor));
+  return Boolean::New(info.Env(), last_exceeded_match_limit_);
 }
 
 Napi::Value Query::MatchLimit(const Napi::CallbackInfo &info) {
   auto *data = info.Env().GetInstanceData<AddonData>();
-  return Number::New(info.Env(), ts_query_cursor_match_limit(data->ts_query_cursor));
+  return Number::New(info.Env(), last_match_limit_);
 }
 
 } // namespace node_tree_sitter

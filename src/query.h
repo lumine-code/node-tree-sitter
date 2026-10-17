@@ -18,6 +18,9 @@ class Query final : public Napi::ObjectWrap<Query> {
 
  private:
   TSQuery *query_;
+  uint32_t last_match_limit_ = UINT32_MAX;
+  bool last_exceeded_match_limit_ = false;
+  bool executing_ = false;
 
   Napi::Value New(const Napi::CallbackInfo &);
   Napi::Value Matches(const Napi::CallbackInfo &);

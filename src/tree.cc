@@ -2,6 +2,7 @@
 #include "./addon_data.h"
 #include "./conversions.h"
 #include "./node.h"
+#include "./operation.h"
 
 #include <napi.h>
 
@@ -43,6 +44,9 @@ void Tree::Init(Napi::Env env, Napi::Object exports) {
 }
 
 Tree::Tree(const Napi::CallbackInfo &info) : Napi::ObjectWrap<Tree>(info), tree_(nullptr) {
+  if (!info.Env().GetInstanceData<AddonData>()->constructing_tree) {
+    throw TypeError::New(info.Env(), "Trees are created by parsing or copying an existing tree");
+  }
   Value().TypeTag(&TREE_TYPE_TAG);
 }
 
@@ -56,6 +60,7 @@ Tree::~Tree() {
 Napi::Value Tree::NewInstance(Napi::Env env, TSTree *tree) {
   auto *data = env.GetInstanceData<AddonData>();
   if (tree != nullptr) {
+    OperationGuard construction(data->constructing_tree);
     Object self = data->tree_constructor.New({});
     Tree::Unwrap(self)->tree_ = tree;
     return self;

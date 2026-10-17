@@ -1,6 +1,6 @@
 module.exports = [
   {
-    files: ["background-parser.js", "script/**/*.js", "test/wasm_test.js", "benchmark/**/*.js"],
+    files: ["background-parser.js", "script/**/*.js", "test/wasm_test.js", "test/api_test.js", "benchmark/**/*.js"],
     languageOptions: { ecmaVersion: "latest", sourceType: "commonjs" },
     rules: {
       "no-unreachable": "error",

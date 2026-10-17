@@ -65,6 +65,12 @@ struct ParserState {
   bool closed = false;
   explicit ParserState(WasmEngine value) : engine(std::move(value)), parser(ts_parser_new()) {}
   ~ParserState() { ts_parser_delete(parser); }
+  void ReleaseClosedParser() {
+    if (closed && !busy && parser) {
+      ts_parser_delete(parser);
+      parser = nullptr;
+    }
+  }
 };
 
 class ParseJob final : public Napi::AsyncWorker {
@@ -78,7 +84,6 @@ class ParseJob final : public Napi::AsyncWorker {
     if (!cleaned_up) napi_remove_env_cleanup_hook(Env(), Cleanup, this);
     ts_tree_delete(old_tree);
     ts_tree_delete(result);
-    state->busy = false;
   }
   static void Cleanup(void *data) {
     auto *self = static_cast<ParseJob *>(data);
@@ -107,6 +112,7 @@ class ParseJob final : public Napi::AsyncWorker {
   }
   void OnOK() override {
     state->busy = false;
+    state->ReleaseClosedParser();
     if (state->cancelled.load(std::memory_order_relaxed)) {
       deferred.Reject(AbortError(Env()).Value());
     } else if (!result) {
@@ -118,7 +124,11 @@ class ParseJob final : public Napi::AsyncWorker {
       deferred.Resolve(tree);
     }
   }
-  void OnError(const Napi::Error &error) override { state->busy = false; deferred.Reject(error.Value()); }
+  void OnError(const Napi::Error &error) override {
+    state->busy = false;
+    state->ReleaseClosedParser();
+    deferred.Reject(error.Value());
+  }
   Napi::Promise::Deferred deferred;
  private:
   std::shared_ptr<ParserState> state;
@@ -179,6 +189,7 @@ class BackgroundParser final : public Napi::ObjectWrap<BackgroundParser> {
   }
   Napi::Value Close(const Napi::CallbackInfo &info) {
     state->closed = true;
+    state->ReleaseClosedParser();
     return Cancel(info);
   }
   static void Init(Napi::Env env, Napi::Object exports) {

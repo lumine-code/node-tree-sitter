@@ -1,6 +1,6 @@
 const binding = typeof process.versions.bun === "string" ?
     // Statically analyzable enough for `bun build --compile` to embed the tree-sitter.node napi addon
-    require(`./prebuilds/${process.platform}-${process.arch}/tree-sitter.node`) :
+    require(`./prebuilds/${process.platform}-${process.arch}/@lumine-code+node-tree-sitter.node`) :
     require('node-gyp-build')(__dirname);
 const {Query, Parser, NodeMethods, Tree, TreeCursor, LookaheadIterator} = binding;
 
@@ -410,7 +410,17 @@ Parser.prototype.parse = function(input, oldTree, {bufferSize, includedRanges, p
  * TreeCursor
  */
 
-const {startPosition, endPosition, currentNode} = TreeCursor.prototype;
+const {startPosition, endPosition, currentNode, reset, resetTo} = TreeCursor.prototype;
+TreeCursor.prototype.reset = function(node) {
+  if (!(node instanceof SyntaxNode)) throw new TypeError('Expected a syntax node');
+  marshalNode(node);
+  this.tree = node.tree;
+  reset.call(this);
+};
+TreeCursor.prototype.resetTo = function(other) {
+  resetTo.call(this, other);
+  this.tree = other.tree;
+};
 
 Object.defineProperties(TreeCursor.prototype, {
   currentNode: {
@@ -651,14 +661,15 @@ Query.prototype.matches = function(
     endIndex = 0,
     matchLimit = 0xFFFFFFFF,
     maxStartDepth = 0xFFFFFFFF,
-    timeoutMicros = 0
+    timeoutMicros = 0,
+    progressCallback = undefined
   } = {}
 ) {
   marshalNode(node);
   const [returnedMatches, returnedNodes] = _matches.call(this, node.tree,
     startPosition.row, startPosition.column,
     endPosition.row, endPosition.column,
-    startIndex, endIndex, matchLimit, maxStartDepth, timeoutMicros
+    startIndex, endIndex, matchLimit, maxStartDepth, timeoutMicros, progressCallback
   );
   const nodes = unmarshalNodes(returnedNodes, node.tree);
   const results = [];

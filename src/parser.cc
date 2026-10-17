@@ -4,7 +4,9 @@
 #include "./logger.h"
 #include "./tree.h"
 #include "./wasm.h"
+#include "./operation.h"
 #include <chrono>
+#include <cmath>
 
 #include <cstddef>
 #include <napi.h>
@@ -20,6 +22,10 @@ class CallbackInput final {
   CallbackInput(Function callback, Napi::Value js_buffer_size) {
     this->callback.Reset(callback, 1);
     if (js_buffer_size.IsNumber()) {
+      double size = js_buffer_size.As<Number>().DoubleValue();
+      if (!std::isfinite(size) || std::floor(size) != size || size < 2 || size > UINT32_MAX / 2) {
+        throw RangeError::New(callback.Env(), "bufferSize must be an integer between 2 and 2147483647");
+      }
       buffer.resize(js_buffer_size.As<Number>().Uint32Value());
     } else {
       buffer.resize(static_cast<uint64_t>(32 * 1024));
@@ -32,7 +38,7 @@ class CallbackInput final {
   }
 
   TSInput Input() {
-    TSInput result;
+    TSInput result{};
     result.payload = static_cast<void *>(this);
     result.encoding = TSInputEncodingUTF16LE;
     result.read = Read;
@@ -46,7 +52,14 @@ class CallbackInput final {
     return data->string_slice.Call(s, {Number::New(s.Env(), offset)}).As<String>();
   }
 
-  static const char * Read(void *payload, uint32_t byte, TSPoint position, uint32_t *bytes_read) {
+  static const char *Read(void *payload, uint32_t byte, TSPoint position, uint32_t *bytes_read) {
+    auto env = static_cast<CallbackInput *>(payload)->callback.Env();
+    *bytes_read = 0;
+    if (env.IsExceptionPending()) return nullptr;
+    try { return ReadImpl(payload, byte, position, bytes_read); }
+    catch (const Napi::Error &error) { error.ThrowAsJavaScriptException(); return nullptr; }
+  }
+  static const char *ReadImpl(void *payload, uint32_t byte, TSPoint position, uint32_t *bytes_read) {
     auto *reader = static_cast<CallbackInput *>(payload);
     Napi::Env env = reader->callback.Env();
 
@@ -121,7 +134,9 @@ class CallbackProgress final {
     if (self->timeout && std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - self->start).count() >= self->timeout) return true;
     if (self->func.IsEmpty()) return false;
     auto env = self->func.Env();
-    return self->func({Number::New(env, state->current_byte_offset), Boolean::New(env, state->has_error)}).As<Boolean>();
+    if (env.IsExceptionPending()) return true;
+    try { return self->func({Number::New(env, state->current_byte_offset / 2), Boolean::New(env, state->has_error)}).As<Boolean>(); }
+    catch (const Napi::Error &error) { error.ThrowAsJavaScriptException(); return true; }
   }
 };
 
@@ -152,6 +167,8 @@ void Parser::Init(Napi::Env env, Napi::Object exports) {
 Parser::Parser(const Napi::CallbackInfo &info) : Napi::ObjectWrap<Parser>(info), parser_(ts_parser_new()) {}
 
 Parser::~Parser() {
+  TSLogger logger = ts_parser_logger(parser_);
+  if (logger.log == Logger::Log) delete static_cast<Logger *>(logger.payload);
   ts_parser_print_dot_graphs(parser_, -1);
   ts_parser_set_logger(parser_, { nullptr, nullptr });
   ts_parser_delete(parser_);
@@ -191,6 +208,7 @@ bool handle_included_ranges(Napi::Env env, TSParser *parser, Napi::Value arg) {
 } // namespace
 
 Napi::Value Parser::SetLanguage(const Napi::CallbackInfo &info) {
+  if (parsing_) throw Error::New(info.Env(), "Cannot modify an active parser");
   const TSLanguage *language = language_methods::UnwrapLanguage(info[0]);
   if (language != nullptr) {
     if (ts_language_is_wasm(language) && !wasm_store_attached_) {
@@ -205,6 +223,8 @@ Napi::Value Parser::SetLanguage(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value Parser::Parse(const CallbackInfo &info) {
+  if (parsing_) throw Error::New(info.Env(), "Cannot re-enter an active parser");
+  OperationGuard operation(parsing_);
   Napi::Env env = info.Env();
 
   if (!info[0].IsFunction()) {
@@ -237,6 +257,7 @@ Napi::Value Parser::Parse(const CallbackInfo &info) {
   if (info.Length() > 4 && info[4].IsFunction()) progress.func = Napi::Persistent(info[4].As<Function>());
   TSParseOptions options{&progress, CallbackProgress::Cancel};
   TSTree *tree = ts_parser_parse_with_options(parser_, old_tree, callback_input.Input(), options);
+  if (env.IsExceptionPending()) { ts_tree_delete(tree); ts_parser_reset(parser_); return env.Undefined(); }
   return Tree::NewInstance(env, tree);
 }
 
@@ -278,6 +299,7 @@ Napi::Value Parser::GetLogger(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value Parser::SetLogger(const Napi::CallbackInfo &info) {
+  if (parsing_) throw Error::New(info.Env(), "Cannot modify an active parser");
   TSLogger current_logger = ts_parser_logger(parser_);
 
   if (info[0].IsFunction()) {
@@ -321,6 +343,7 @@ Napi::Value Parser::PrintDotGraphs(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value Parser::Reset(const Napi::CallbackInfo & info) {
+  if (parsing_) throw Error::New(info.Env(), "Cannot modify an active parser");
   ts_parser_reset(parser_);
   return info.This();
 }

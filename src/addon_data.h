@@ -13,7 +13,7 @@ public:
   explicit AddonData(Napi::Env _env) {}
 
   ~AddonData() {
-    ts_query_cursor_delete(ts_query_cursor);
+    ts_tree_cursor_delete(&scratch_cursor);
   }
 
   // conversions
@@ -31,7 +31,6 @@ public:
   Napi::FunctionReference string_slice;
 
   // query
-  TSQueryCursor *ts_query_cursor = nullptr;
   Napi::FunctionReference query_constructor;
 
   // tree_cursor
@@ -39,6 +38,8 @@ public:
 
   // tree
   Napi::FunctionReference tree_constructor;
+  bool constructing_tree = false;
+  bool constructing_cursor = false;
 
   // lookaheaditerator
   Napi::FunctionReference lookahead_iterator_constructor;
