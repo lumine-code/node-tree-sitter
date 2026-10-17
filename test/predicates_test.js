@@ -163,12 +163,13 @@ test("node cache separates shifted views regardless of lookup order", () => {
   }
 });
 
-test("node-cache transfer offsets are checked before reading native memory", () => {
+test("node-cache mutation helpers are not exposed on public trees", () => {
   const tree = makeParser().parse("x;"),
     root = tree.rootNode;
-  assert.throws(() => tree._cacheNode(root, 0xffffffff), RangeError);
-  assert.throws(() => tree._cacheNodes([root], new Uint32Array([0xffffffff])), RangeError);
-  assert.throws(() => tree._cacheNodes([root], new Uint32Array(0)), TypeError);
+  assert.equal(tree._cacheNode, undefined);
+  assert.equal(tree._cacheNodes, undefined);
+  assert.equal(Object.hasOwn(P.Tree.prototype, "_cacheNode"), false);
+  assert.equal(Object.hasOwn(P.Tree.prototype, "_cacheNodes"), false);
   assert.equal(tree.rootNode, root);
 });
 

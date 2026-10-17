@@ -308,23 +308,12 @@ void FinalizeNode(Napi::Env _env, Tree::NodeCacheEntry *cache_entry) {
   delete cache_entry;
 }
 
-const uint32_t *TransferredFields(Napi::Env env, uint32_t offset) {
-  auto *data = env.GetInstanceData<AddonData>();
-  if (offset > data->transfer_buffer_length || data->transfer_buffer_length - offset < 6) {
-    throw RangeError::New(env, "Invalid transferred node offset");
-  }
-  return data->transfer_buffer + offset;
-}
-
-void CacheNodeForTree(Tree *tree, Napi::Env env, Object js_node, const uint32_t *fields = nullptr) {
-  uint32_t local_fields[6]{};
-  if (!fields) {
-    for (unsigned i = 0; i < (tree->has_offset_views_ ? 6U : 2U); i++) {
-      auto value = js_node.Get(i);
-      if (!value.IsNumber()) return;
-      local_fields[i] = value.As<Number>().Uint32Value();
-    }
-    fields = local_fields;
+void CacheNodeForTree(Tree *tree, Napi::Env env, Object js_node) {
+  uint32_t fields[6]{};
+  for (unsigned i = 0; i < (tree->has_offset_views_ ? 6U : 2U); i++) {
+    auto value = js_node.Get(i);
+    if (!value.IsNumber()) return;
+    fields[i] = value.As<Number>().Uint32Value();
   }
   const void *key = UnmarshalNodeId(fields);
   const std::array<uint32_t, 4> context{fields[2], fields[3], fields[4], fields[5]};
@@ -355,8 +344,7 @@ Napi::Value Tree::CacheNode(const Napi::CallbackInfo &info) {
     throw TypeError::New(env, "not an object");
   }
 
-  const uint32_t *fields = info[1].IsUndefined() ? nullptr : TransferredFields(env, UnsignedInteger(info[1], UINT32_MAX, "Node offset"));
-  CacheNodeForTree(this, env, info[0].As<Object>(), fields);
+  CacheNodeForTree(this, env, info[0].As<Object>());
   return env.Undefined();
 }
 
@@ -368,20 +356,12 @@ Napi::Value Tree::CacheNodes(const Napi::CallbackInfo &info) {
   }
   auto js_nodes = info[0].As<Array>();
   uint32_t length = js_nodes.Length();
-  const uint32_t *offsets = nullptr;
-  if (!info[1].IsUndefined()) {
-    if (!info[1].IsTypedArray() || info[1].As<TypedArray>().TypedArrayType() != napi_uint32_array || info[1].As<Uint32Array>().ElementLength() != length) {
-      throw TypeError::New(env, "Expected one transferred offset per node");
-    }
-    offsets = info[1].As<Uint32Array>().Data();
-  }
-
   for (uint32_t i = 0; i < length; ++i) {
     Napi::Value js_node = js_nodes[i];
     if (!js_node.IsObject()) {
       throw TypeError::New(env, "not an object");
     }
-    CacheNodeForTree(this, env, js_node.As<Object>(), offsets ? TransferredFields(env, offsets[i]) : nullptr);
+    CacheNodeForTree(this, env, js_node.As<Object>());
   }
 
   return env.Undefined();

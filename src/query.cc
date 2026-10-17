@@ -97,11 +97,13 @@ Query::Query(const Napi::CallbackInfo &info) : Napi::ObjectWrap<Query>(info) , q
   if (info[1].IsString()) {
     auto string = info[1].As<String>();
     std::string utf8_string = string.Utf8Value();
+    if (utf8_string.size() > UINT32_MAX) throw RangeError::New(env, "Query source exceeds the native size limit");
     source = utf8_string.data();
     source_len = utf8_string.length();
     query_ = ts_query_new(language, source, source_len, &error_offset, &error_type);
   } else if (info[1].IsBuffer()) {
     auto buf = info[1].As<Buffer<char>>();
+    if (buf.Length() > UINT32_MAX) throw RangeError::New(env, "Query source exceeds the native size limit");
     source = buf.Data();
     source_len = buf.Length();
     query_ = ts_query_new(language, source, source_len, &error_offset, &error_type);
@@ -122,7 +124,11 @@ Query::Query(const Napi::CallbackInfo &info) : Napi::ObjectWrap<Query>(info) , q
     throw error;
   }
 
+  // A throwing C++ constructor does not run Query::~Query. Predicate parsing
+  // in JS can throw after native compilation has succeeded.
+  std::unique_ptr<TSQuery, decltype(&ts_query_delete)> constructing(query_, ts_query_delete);
   info.This().As<Napi::Object>().Get("_init").As<Napi::Function>().Call(info.This(), {});
+  constructing.release();
 }
 
 Query::~Query() {
@@ -272,6 +278,7 @@ Napi::Value Query::Matches(const Napi::CallbackInfo &info) {
   Array js_matches = Array::New(env);
   unsigned index = 0;
   vector<TSNode> nodes;
+  vector<String> capture_names(ts_query_capture_count(ts_query));
   TSQueryMatch match;
 
   while (ts_query_cursor_next_match(cursor, &match)) {
@@ -280,15 +287,14 @@ Napi::Value Query::Matches(const Napi::CallbackInfo &info) {
     for (uint16_t i = 0; i < match.capture_count; i++) {
       const TSQueryCapture &capture = match.captures[i];
 
-      uint32_t capture_name_len = 0;
-      const char *capture_name = ts_query_capture_name_for_id(
-          ts_query, capture.index, &capture_name_len);
-
-      TSNode node = capture.node;
-      nodes.push_back(node);
-
-      String js_capture = String::New(env, capture_name);;
-      js_matches[index++] = js_capture;
+      auto &name = capture_names[capture.index];
+      if (name.IsEmpty()) {
+        uint32_t length = 0;
+        const char *text = ts_query_capture_name_for_id(ts_query, capture.index, &length);
+        name = String::New(env, text, length);
+      }
+      nodes.push_back(capture.node);
+      js_matches[index++] = name;
     }
   }
 
@@ -383,6 +389,7 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
   Array js_matches = Array::New(env);
   unsigned index = 0;
   vector<TSNode> nodes;
+  vector<String> capture_names(ts_query_capture_count(ts_query));
   TSQueryMatch match;
   uint32_t capture_index;
   std::vector<bool> needs_context(ts_query_pattern_count(ts_query), true);
@@ -433,15 +440,14 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
     for (uint32_t i = 0; i < count; i++) {
       const TSQueryCapture &capture = match.captures[context ? i : capture_index];
 
-      uint32_t capture_name_len = 0;
-      const char *capture_name = ts_query_capture_name_for_id(
-          ts_query, capture.index, &capture_name_len);
-
-      TSNode node = capture.node;
-      nodes.push_back(node);
-
-      String js_capture = String::New(env, capture_name);;
-      js_matches[index++] = js_capture;
+      auto &name = capture_names[capture.index];
+      if (name.IsEmpty()) {
+        uint32_t length = 0;
+        const char *text = ts_query_capture_name_for_id(ts_query, capture.index, &length);
+        name = String::New(env, text, length);
+      }
+      nodes.push_back(capture.node);
+      js_matches[index++] = name;
     }
   }
 

@@ -6,12 +6,16 @@ const {Query, Parser, NodeMethods, Tree, TreeCursor, LookaheadIterator} = bindin
 
 const util = require('util');
 const immutableSnapshots = new WeakSet();
+const nodeConstruction = Symbol('syntax-node-construction');
 
 /*
  * Tree
  */
 
 const {rootNode, rootNodeWithOffset, edit, copy} = Tree.prototype;
+const { _cacheNode: cacheNode, _cacheNodes: cacheNodes } = Tree.prototype;
+delete Tree.prototype._cacheNode;
+delete Tree.prototype._cacheNodes;
 Tree.prototype.copy = function() {
   const tree = copy.call(this);
   tree.input = this.input;
@@ -67,8 +71,14 @@ Tree.prototype.walk = function() {
  * Node
  */
 
+let isSyntaxNode;
 class SyntaxNode {
-  constructor(tree) {
+  #brand;
+  static {
+    isSyntaxNode = value => value !== null && typeof value === 'object' && #brand in value;
+  }
+  constructor(tree, token) {
+    if (token !== nodeConstruction) throw new TypeError('Syntax nodes are created by parsing or traversing a tree');
     Object.defineProperty(this, 'tree', {
       value: tree,
       enumerable: true
@@ -823,22 +833,16 @@ const {pointTransferArray} = binding;
 const NODE_FIELD_COUNT = 6;
 const ERROR_TYPE_ID = 0xFFFF
 
-function getID(buffer, offset) {
-  const low  = BigInt(buffer[offset]);
-  const high = BigInt(buffer[offset + 1]);
-  return (high << 32n) + low;
-}
-
 // Scalar reads already passed through the native identity cache. They do not
-// need the BigInt keys used to deduplicate a batch of freshly marshaled nodes.
+// need the two-word identity lookup used for freshly marshaled batches.
 function unmarshalNode(value, tree) {
   if (typeof value === 'object') return value;
   const fields = binding.nodeTransferArray;
   if (fields[0] === 0 && fields[1] === 0) return null;
   const NodeClass = value === ERROR_TYPE_ID ? SyntaxNode : tree.language.nodeSubclasses[value];
-  const result = new NodeClass(tree);
+  const result = new NodeClass(tree, nodeConstruction);
   for (let i = 0; i < NODE_FIELD_COUNT; i++) result[i] = fields[i];
-  tree._cacheNode(result);
+  cacheNode.call(tree, result);
   return result;
 }
 
@@ -856,28 +860,27 @@ function unmarshalBatchNode(value, tree, offset, cache) {
     : tree.language.nodeSubclasses[nodeTypeId];
 
   const {nodeTransferArray} = binding;
-  const id = getID(nodeTransferArray, offset)
-  if (id === 0n) {
+  // Keep both uint32 words exact without allocating a BigInt per entry.
+  const low = nodeTransferArray[offset], high = nodeTransferArray[offset + 1];
+  if (low === 0 && high === 0) {
     return null
   }
 
-  let cachedResult;
-  if (cache && (cachedResult = cache.get(id)) &&
+  let bucket = cache.get(high);
+  const cachedResult = bucket?.get(low);
+  if (cachedResult &&
       cachedResult[2] === nodeTransferArray[offset + 2] && cachedResult[3] === nodeTransferArray[offset + 3] &&
       cachedResult[4] === nodeTransferArray[offset + 4] && cachedResult[5] === nodeTransferArray[offset + 5])
     return cachedResult;
 
-  const result = new NodeClass(tree);
+  const result = new NodeClass(tree, nodeConstruction);
   for (let i = 0; i < NODE_FIELD_COUNT; i++) {
     result[i] = nodeTransferArray[offset + i];
   }
 
-  if (cache) {
-    cache.set(id, result);
-    cache.created.push(result);
-  } else {
-    tree._cacheNode(result);
-  }
+  if (!bucket) cache.set(high, bucket = new Map());
+  bucket.set(low, result);
+  cache.created.push(result);
 
   return result;
 }
@@ -895,12 +898,13 @@ function unmarshalNodes(nodes, tree) {
     }
   }
 
-  tree._cacheNodes(cache.created);
+  cacheNodes.call(tree, cache.created);
 
   return nodes;
 }
 
 function marshalNode(node, offset = 0) {
+  if (!isSyntaxNode(node)) throw new TypeError('Expected a syntax node created by this module');
   if (!(node.tree instanceof Tree)) {
     throw new TypeError("SyntaxNode must belong to a Tree")
   }
