@@ -23,9 +23,17 @@ class Tree final : public Napi::ObjectWrap<Tree> {
     Tree *tree;
     const void *key;
     Napi::ObjectReference node;
-    NodeCacheEntry *next;
+  };
+  struct NodeView {
+    std::array<uint32_t, 4> context{};
+    NodeCacheEntry *next = nullptr;
   };
   Napi::Value CachedNode(const TSNode &node) const;
+  NodeCacheEntry *NextCached(NodeCacheEntry *entry) const {
+    if (!has_offset_views_) return nullptr;
+    auto found = node_contexts_.find(entry);
+    return found == node_contexts_.end() ? nullptr : found->second.next;
+  }
 
   TSTree *tree_;
   bool snapshot_ = false;
@@ -33,7 +41,7 @@ class Tree final : public Napi::ObjectWrap<Tree> {
   mutable uint32_t active_readers_ = 0;
   std::unordered_map<const void *, NodeCacheEntry *> cached_nodes_;
   bool has_offset_views_ = false;
-  std::unordered_map<NodeCacheEntry *, std::array<uint32_t, 4>> node_contexts_;
+  std::unordered_map<NodeCacheEntry *, NodeView> node_contexts_;
 
  private:
   Napi::Value Edit(const Napi::CallbackInfo &info);

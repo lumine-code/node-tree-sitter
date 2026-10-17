@@ -183,6 +183,17 @@ test("custom text readers are not treated as immutable predicate input", () => {
   });
   const getterResult = query.captures(getterTree.rootNode);
   assert.ok(reads > getterResult.length * 8, "input accessors must be evaluated for every predicate context");
+  const accessorTree = makeParser().parse(text),
+    originalReader = accessorTree.getText;
+  reads = 0;
+  Object.defineProperty(accessorTree, "getText", {
+    get() {
+      reads++;
+      return originalReader;
+    },
+  });
+  const accessorResult = query.captures(accessorTree.rootNode);
+  assert.ok(reads > accessorResult.length * 8, "text-reader accessors must remain live");
 });
 
 test("ordered edit fast paths match sequential strings and every intermediate point", () => {

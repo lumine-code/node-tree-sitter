@@ -724,7 +724,8 @@ Query.prototype.captures = function(
   const results = [];
 
   const inputDescriptor = Object.getOwnPropertyDescriptor(node.tree, "input");
-  const stableText = immutableSnapshots.has(node.tree) || (typeof inputDescriptor?.value === "string" && node.tree.getText === getTextFromString);
+  const readerDescriptor = Object.getOwnPropertyDescriptor(node.tree, "getText");
+  const stableText = immutableSnapshots.has(node.tree) || (typeof inputDescriptor?.value === "string" && readerDescriptor?.value === getTextFromString);
   let previousContext, previousAccepted;
   let i = 0
   let nodeIndex = 0;
@@ -816,7 +817,20 @@ function getID(buffer, offset) {
   return (high << 32n) + low;
 }
 
-function unmarshalNode(value, tree, offset = 0, cache = null, created = null, offsets = null) {
+// Scalar reads already passed through the native identity cache. They do not
+// need the BigInt keys used to deduplicate a batch of freshly marshaled nodes.
+function unmarshalNode(value, tree) {
+  if (typeof value === 'object') return value;
+  const fields = binding.nodeTransferArray;
+  if (fields[0] === 0 && fields[1] === 0) return null;
+  const NodeClass = value === ERROR_TYPE_ID ? SyntaxNode : tree.language.nodeSubclasses[value];
+  const result = new NodeClass(tree);
+  for (let i = 0; i < NODE_FIELD_COUNT; i++) result[i] = fields[i];
+  tree._cacheNode(result);
+  return result;
+}
+
+function unmarshalBatchNode(value, tree, offset, cache) {
   /* case 1: node from the tree cache */
   if (typeof value === 'object') {
     const node = value;
@@ -848,10 +862,9 @@ function unmarshalNode(value, tree, offset = 0, cache = null, created = null, of
 
   if (cache) {
     cache.set(id, result);
-    created.push(result);
-    offsets.push(offset);
+    cache.created.push(result);
   } else {
-    tree._cacheNode(result, offset);
+    tree._cacheNode(result);
   }
 
   return result;
@@ -859,18 +872,18 @@ function unmarshalNode(value, tree, offset = 0, cache = null, created = null, of
 
 function unmarshalNodes(nodes, tree) {
   const cache = new Map();
-  const created = [], offsets = [];
+  cache.created = [];
 
   let offset = 0;
   for (let i = 0, {length} = nodes; i < length; i++) {
-    const node = unmarshalNode(nodes[i], tree, offset, cache, created, offsets);
+    const node = unmarshalBatchNode(nodes[i], tree, offset, cache);
     if (node !== nodes[i]) {
       nodes[i] = node;
       offset += NODE_FIELD_COUNT
     }
   }
 
-  tree._cacheNodes(created, Uint32Array.from(offsets));
+  tree._cacheNodes(cache.created);
 
   return nodes;
 }

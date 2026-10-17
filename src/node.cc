@@ -60,7 +60,12 @@ Napi::Value GetMarshalNodes(const Napi::CallbackInfo &info,
   uint32_t *p = data->transfer_buffer;
   for (unsigned i = 0; i < node_count; i++) {
     TSNode node = nodes[i];
-    auto value = tree->CachedNode(node);
+    Napi::Value value;
+    if (tree->has_offset_views_) value = tree->CachedNode(node);
+    else {
+      auto found = tree->cached_nodes_.find(node.id);
+      if (found != tree->cached_nodes_.end()) value = found->second->node.Value();
+    }
     if (!value.IsEmpty()) {
       result[i] = value;
     } else {
@@ -83,7 +88,12 @@ Napi::Value GetMarshalNodes(const Napi::CallbackInfo &info,
 Napi::Value GetMarshalNode(const Napi::CallbackInfo &info, const Tree *tree, TSNode node) {
   Env env = info.Env();
   auto* data = env.GetInstanceData<AddonData>();
-  auto value = tree->CachedNode(node);
+  Napi::Value value;
+  if (tree->has_offset_views_) value = tree->CachedNode(node);
+  else {
+    auto found = tree->cached_nodes_.find(node.id);
+    if (found != tree->cached_nodes_.end()) value = found->second->node.Value();
+  }
   if (!value.IsEmpty()) {
     return value;
   } else {
