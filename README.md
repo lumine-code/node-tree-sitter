@@ -28,7 +28,7 @@ npm test
 
 The explicit setup command downloads a pinned Wasmtime 48.0.1 C API archive and verifies its SHA-256 before extraction. It supports Windows, macOS and glibc Linux on x64 and ARM64. Alternatively, set `WASMTIME_ROOT` to a compatible C API distribution or source build containing `include/` and `lib/`. No download runs from the package install hook. Wasmtime is linked statically into the addon; language packages remain platform-independent Wasm files. This repository contains no Rust implementation, although Wasmtime itself is built from Rust.
 
-Source installation from an npm or Git package also requires a prepared `WASMTIME_ROOT` when no matching prebuild is available. This initial fork does not publish prebuilds or releases automatically on branch pushes.
+Source installation from an npm or Git package also requires a prepared `WASMTIME_ROOT` when no matching prebuild is available. Git dependency archives omit submodules; run `npm run setup:runtime` in the installed package before building when `vendor/tree-sitter/lib/src/lib.c` is absent. This explicit command downloads the pinned upstream source archive, verifies its SHA-256 and extracts the unmodified C runtime and headers. A recursive checkout or source tarball already containing those files needs no download. Neither provisioning command runs from an install hook. This initial fork does not publish prebuilds or releases automatically on branch pushes.
 
 ## Usage
 
