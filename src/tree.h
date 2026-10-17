@@ -26,6 +26,7 @@ class Tree final : public Napi::ObjectWrap<Tree> {
 
   TSTree *tree_;
   bool snapshot_ = false;
+  mutable uint32_t active_readers_ = 0;
   std::unordered_map<const void *, NodeCacheEntry *> cached_nodes_;
 
  private:
@@ -39,6 +40,12 @@ class Tree final : public Napi::ObjectWrap<Tree> {
   Napi::Value GetIncludedRanges(const Napi::CallbackInfo &info);
   Napi::Value CacheNode(const Napi::CallbackInfo &info);
   Napi::Value CacheNodes(const Napi::CallbackInfo &info);
+};
+
+struct TreeReadGuard {
+  const Tree *tree;
+  explicit TreeReadGuard(const Tree *value) : tree(value) { if (tree) tree->active_readers_++; }
+  ~TreeReadGuard() { if (tree) tree->active_readers_--; }
 };
 
 } // namespace node_tree_sitter

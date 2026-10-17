@@ -3,6 +3,7 @@
 #include "./node.h"
 #include "./operation.h"
 #include <memory>
+#include <cmath>
 
 #include <napi.h>
 #include <string>
@@ -237,6 +238,7 @@ Napi::Value Query::Matches(const Napi::CallbackInfo &info) {
     throw Error::New(env, "Missing argument tree");
   }
 
+  TreeReadGuard reading(tree);
   TSQuery *ts_query = query->query_;
   TSNode root_node = node_methods::UnmarshalNode(env, tree);
   TSPoint start_point = {start_row, start_column};
@@ -334,6 +336,7 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
     throw Error::New(env, "Missing argument tree");
   }
 
+  TreeReadGuard reading(tree);
   TSQuery *ts_query = query->query_;
   TSNode root_node = node_methods::UnmarshalNode(env, tree);
   TSPoint start_point = {start_row, start_column};
@@ -353,6 +356,14 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
   vector<TSNode> nodes;
   TSQueryMatch match;
   uint32_t capture_index;
+  std::vector<bool> needs_context(ts_query_pattern_count(ts_query), true);
+  if (info.Length() > 11 && info[11].IsArray()) {
+    auto flags = info[11].As<Array>();
+    for (uint32_t i = 0; i < needs_context.size(); i++) {
+      auto flag = flags.Get(i);
+      if (flag.IsBoolean()) needs_context[i] = flag.As<Boolean>().Value();
+    }
+  }
 
   while (ts_query_cursor_next_capture(
     cursor,
@@ -361,10 +372,14 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
   )) {
 
     js_matches[index++] = Number::New(env, match.pattern_index);
-    js_matches[index++] = Number::New(env, capture_index);
+    const bool context = needs_context[match.pattern_index];
+    js_matches[index++] = Number::New(env, context ? capture_index : 0);
 
-    for (uint16_t i = 0; i < match.capture_count; i++) {
-      const TSQueryCapture &capture = match.captures[i];
+    // Predicateless patterns only need the emitted capture. Repeating the entire
+    // match per capture creates quadratic JS arrays for quantified patterns.
+    const uint32_t count = context ? match.capture_count : 1;
+    for (uint32_t i = 0; i < count; i++) {
+      const TSQueryCapture &capture = match.captures[context ? i : capture_index];
 
       uint32_t capture_name_len = 0;
       const char *capture_name = ts_query_capture_name_for_id(
@@ -389,6 +404,15 @@ Napi::Value Query::Captures(const Napi::CallbackInfo &info) {
   return result;
 }
 
+uint32_t Query::PatternIndex(const Napi::CallbackInfo &info) {
+  if (!info[0].IsNumber()) throw TypeError::New(info.Env(), "Pattern index must be an integer");
+  double value = info[0].As<Number>().DoubleValue();
+  if (!std::isfinite(value) || std::floor(value) != value || value < 0 || value >= ts_query_pattern_count(query_)) {
+    throw RangeError::New(info.Env(), "Pattern index is out of range");
+  }
+  return static_cast<uint32_t>(value);
+}
+
 Napi::Value Query::DisableCapture(const Napi::CallbackInfo &info) {
   if (executing_) throw Error::New(info.Env(), "Cannot modify an active query");
   std::string string = info[0].As<String>().Utf8Value();
@@ -399,7 +423,7 @@ Napi::Value Query::DisableCapture(const Napi::CallbackInfo &info) {
 
 Napi::Value Query::DisablePattern(const Napi::CallbackInfo &info) {
   if (executing_) throw Error::New(info.Env(), "Cannot modify an active query");
-  uint32_t pattern_index = info[0].As<Number>().Uint32Value();
+  uint32_t pattern_index = PatternIndex(info);
   ts_query_disable_pattern(query_, pattern_index);
   return info.Env().Undefined();
 }
@@ -410,22 +434,22 @@ Napi::Value Query::IsPatternGuaranteedAtStep(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value Query::IsPatternRooted(const Napi::CallbackInfo &info) {
-  uint32_t pattern_index = info[0].As<Number>().Uint32Value();
+  uint32_t pattern_index = PatternIndex(info);
   return Boolean::New(info.Env(), ts_query_is_pattern_rooted(query_, pattern_index));
 }
 
 Napi::Value Query::IsPatternNonLocal(const Napi::CallbackInfo &info) {
-  uint32_t pattern_index = info[0].As<Number>().Uint32Value();
+  uint32_t pattern_index = PatternIndex(info);
   return Boolean::New(info.Env(), ts_query_is_pattern_non_local(query_, pattern_index));
 }
 
 Napi::Value Query::StartIndexForPattern(const Napi::CallbackInfo &info) {
-  uint32_t pattern_index = info[0].As<Number>().Uint32Value();
+  uint32_t pattern_index = PatternIndex(info);
   return Number::New(info.Env(), ts_query_start_byte_for_pattern(query_, pattern_index));
 }
 
 Napi::Value Query::EndIndexForPattern(const Napi::CallbackInfo &info) {
-  uint32_t pattern_index = info[0].As<Number>().Uint32Value();
+  uint32_t pattern_index = PatternIndex(info);
   return Number::New(info.Env(), ts_query_end_byte_for_pattern(query_, pattern_index));
 }
 

@@ -1,6 +1,7 @@
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 const env = { ...process.env };
+env.NODE_TREE_SITTER_TEST_STDERR = "1";
 delete env.CI;
 delete env.ELECTRON_RUN_AS_NODE;
 const executable = process.env.ELECTRON_EXECUTABLE || require("electron");

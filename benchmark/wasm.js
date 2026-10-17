@@ -51,6 +51,7 @@ async function run() {
     stalls = [];
 
   let checksum;
+  let firstParseMs;
   try {
     for (let i = 0; i < samples + warmups; i++) {
       await new Promise((resolve) => setTimeout(resolve, 4));
@@ -66,6 +67,7 @@ async function run() {
       const submitted = performance.now();
       const tree = await pending;
       const duration = performance.now() - start;
+      if (i === 0) firstParseMs = duration;
       await new Promise((resolve) => setTimeout(resolve, 4));
       clearInterval(heartbeat);
       const text = source.replace("= 0 +", "= 9 +");
@@ -109,6 +111,7 @@ async function run() {
     JSON.stringify({
       mode,
       loadMs,
+      firstParseMs,
       initial: stats(totals),
       submission: stats(submissions),
       incremental: stats(incremental),

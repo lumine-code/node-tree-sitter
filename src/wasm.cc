@@ -60,11 +60,14 @@ class LoadLanguageJob final : public Napi::AsyncWorker {
 struct ParserState {
   WasmEngine engine;
   TSParser *parser = nullptr;
+  const TSLanguage *language;
+  bool initialized = false; // Only the worker touches this while a job is active.
   std::atomic<bool> cancelled{false};
   bool busy = false; // Accessed only on the owning JS thread.
   bool closed = false;
-  explicit ParserState(WasmEngine value) : engine(std::move(value)), parser(ts_parser_new()) {}
-  ~ParserState() { ts_parser_delete(parser); }
+  ParserState(WasmEngine value, const TSLanguage *lang)
+    : engine(std::move(value)), parser(ts_parser_new()), language(ts_language_copy(lang)) {}
+  ~ParserState() { ts_parser_delete(parser); ts_language_delete(language); }
   void ReleaseClosedParser() {
     if (closed && !busy && parser) {
       ts_parser_delete(parser);
@@ -100,6 +103,22 @@ class ParseJob final : public Napi::AsyncWorker {
     return static_cast<ParserState *>(progress->payload)->cancelled.load(std::memory_order_relaxed);
   }
   void Execute() override {
+    if (state->cancelled.load(std::memory_order_relaxed)) return;
+    try {
+      if (!state->initialized) {
+        if (ts_language_is_wasm(state->language)) {
+          ts_parser_set_wasm_store(state->parser, NewWasmStore(state->engine));
+        }
+        if (!ts_parser_set_language(state->parser, state->language)) {
+          SetError("Cannot assign parser language");
+          return;
+        }
+        state->initialized = true;
+      }
+    } catch (const std::exception &error) {
+      SetError(error.what());
+      return;
+    }
     if (state->cancelled.load(std::memory_order_relaxed)) return;
     TSInput input{};
     input.payload = this;
@@ -142,11 +161,7 @@ class BackgroundParser final : public Napi::ObjectWrap<BackgroundParser> {
  public:
   explicit BackgroundParser(const Napi::CallbackInfo &info) : ObjectWrap(info) {
     auto language = language_methods::UnwrapLanguage(info[0]);
-    state = std::make_shared<ParserState>(GetWasmEngine(info.Env()));
-    try {
-      if (ts_language_is_wasm(language)) ts_parser_set_wasm_store(state->parser, NewWasmStore(state->engine));
-    } catch (const std::exception &error) { throw Napi::Error::New(info.Env(), error.what()); }
-    if (!ts_parser_set_language(state->parser, language)) throw Napi::Error::New(info.Env(), "Cannot assign parser language");
+    state = std::make_shared<ParserState>(GetWasmEngine(info.Env()), language);
   }
   ~BackgroundParser() override { state->cancelled.store(true, std::memory_order_relaxed); }
   Napi::Value Parse(const Napi::CallbackInfo &info) {
@@ -159,7 +174,7 @@ class BackgroundParser final : public Napi::ObjectWrap<BackgroundParser> {
     const Tree *old = nullptr;
     if (!info[1].IsNull() && !info[1].IsUndefined()) {
       old = Tree::UnwrapTree(info[1]);
-      if (!old || ts_tree_language(old->tree_) != ts_parser_language(state->parser)) {
+      if (!old || ts_tree_language(old->tree_) != state->language) {
         throw Napi::TypeError::New(env, "Previous tree belongs to a different language");
       }
     }

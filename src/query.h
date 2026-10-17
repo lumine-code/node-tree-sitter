@@ -21,6 +21,7 @@ class Query final : public Napi::ObjectWrap<Query> {
   uint32_t last_match_limit_ = UINT32_MAX;
   bool last_exceeded_match_limit_ = false;
   bool executing_ = false;
+  uint32_t PatternIndex(const Napi::CallbackInfo &info);
 
   Napi::Value New(const Napi::CallbackInfo &);
   Napi::Value Matches(const Napi::CallbackInfo &);

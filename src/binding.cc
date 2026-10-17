@@ -10,12 +10,21 @@
 #include "./wasm.h"
 
 #include <napi.h>
+#include <cstdlib>
 
 using namespace Napi;
 
 namespace node_tree_sitter {
 
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
+#ifdef _WIN32
+  // Automated regression probes must fail in stderr, never open a modal CRT
+  // dialog. Normal application hosts keep their own error-reporting policy.
+  if (std::getenv("NODE_TREE_SITTER_TEST_STDERR")) {
+    _set_error_mode(_OUT_TO_STDERR);
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+  }
+#endif
   auto* data = new AddonData(env);
   env.SetInstanceData(data);
 

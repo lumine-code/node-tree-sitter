@@ -719,7 +719,8 @@ Query.prototype.captures = function(
   marshalNode(node);
   const [returnedMatches, returnedNodes] = _captures.call(this, node.tree,
     startPosition.row, startPosition.column, endPosition.row, endPosition.column,
-    startIndex, endIndex, matchLimit, maxStartDepth, timeoutMicros, progressCallback
+    startIndex, endIndex, matchLimit, maxStartDepth, timeoutMicros, progressCallback,
+    this.predicates.map(predicates => predicates.length > 0)
   );
   const nodes = unmarshalNodes(returnedNodes, node.tree);
   const results = [];

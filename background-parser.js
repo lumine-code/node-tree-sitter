@@ -1,19 +1,10 @@
 const MAX_INDEX = Math.floor(0xffffffff / 2);
+const { TextEdits, advanceText } = require("./text-edits");
 
 function index(value, name, maximum = MAX_INDEX) {
   if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
     throw new RangeError(`${name} must be an integer between 0 and ${maximum}`);
   }
-}
-
-function position(text, offset) {
-  let row = 0;
-  let start = 0;
-  for (let next = text.indexOf("\n"); next >= 0 && next < offset; next = text.indexOf("\n", next + 1)) {
-    row++;
-    start = next + 1;
-  }
-  return { row, column: offset - start };
 }
 
 function preparePrevious(previous, edits, text, language) {
@@ -24,34 +15,57 @@ function preparePrevious(previous, edits, text, language) {
   if (previous.language !== language || typeof previous.input !== "string") {
     throw new TypeError("previous must be a string snapshot from the same language");
   }
-  const copy = previous.copy();
-  let source = previous.input;
+  if (!edits.length) {
+    if (previous.input !== text)
+      throw new Error("edits do not transform the previous snapshot into the requested text");
+    return previous;
+  }
+  if (edits.length === 1) {
+    const { startIndex, oldEndIndex, newText } = edits[0];
+    const source = previous.input;
+    index(startIndex, "startIndex", source.length);
+    index(oldEndIndex, "oldEndIndex", source.length);
+    if (oldEndIndex < startIndex || typeof newText !== "string")
+      throw new TypeError("An edit requires ordered indices and string newText");
+    index(source.length + newText.length - (oldEndIndex - startIndex), "edited text length");
+    if (source.slice(0, startIndex) + newText + source.slice(oldEndIndex) !== text) {
+      throw new Error("edits do not transform the previous snapshot into the requested text");
+    }
+    const startPosition = advanceText(source, 0, startIndex);
+    const copy = previous.copy();
+    copy.edit({
+      startIndex,
+      oldEndIndex,
+      newEndIndex: startIndex + newText.length,
+      startPosition,
+      oldEndPosition: advanceText(source, startIndex, oldEndIndex, startPosition),
+      newEndPosition: advanceText(newText, 0, newText.length, startPosition),
+    });
+    return copy;
+  }
+  const source = new TextEdits(previous.input);
+  const changes = [];
   for (const edit of edits) {
     index(edit.startIndex, "startIndex", source.length);
     index(edit.oldEndIndex, "oldEndIndex", source.length);
     if (edit.oldEndIndex < edit.startIndex || typeof edit.newText !== "string") {
       throw new TypeError("An edit requires ordered indices and string newText");
     }
-    const updated = source.slice(0, edit.startIndex) + edit.newText + source.slice(edit.oldEndIndex);
-    index(updated.length, "edited text length");
-    const newEndIndex = edit.startIndex + edit.newText.length;
-    copy.edit({
-      startIndex: edit.startIndex,
-      oldEndIndex: edit.oldEndIndex,
-      newEndIndex,
-      startPosition: position(source, edit.startIndex),
-      oldEndPosition: position(source, edit.oldEndIndex),
-      newEndPosition: position(updated, newEndIndex),
-    });
-    source = updated;
+    index(source.length + edit.newText.length - (edit.oldEndIndex - edit.startIndex), "edited text length");
+    changes.push(source.replace(edit.startIndex, edit.oldEndIndex, edit.newText));
   }
-  if (source !== text) throw new Error("edits do not transform the previous snapshot into the requested text");
+  if (source.getText() !== text)
+    throw new Error("edits do not transform the previous snapshot into the requested text");
+  const copy = previous.copy();
+  for (const change of changes) copy.edit(change);
   return copy;
 }
 
 function validateRanges(ranges, text) {
   if (ranges === undefined) return;
   if (!Array.isArray(ranges)) throw new TypeError("includedRanges must be an array");
+  let offset = 0,
+    position = { row: 0, column: 0 };
   let previousEnd = 0;
   for (const range of ranges) {
     index(range.startIndex, "range.startIndex", text.length);
@@ -60,7 +74,10 @@ function validateRanges(ranges, text) {
       throw new RangeError("includedRanges must be ordered and non-overlapping");
     }
     for (const endpoint of ["start", "end"]) {
-      const actual = position(text, range[`${endpoint}Index`]);
+      const next = range[`${endpoint}Index`];
+      const actual = advanceText(text, offset, next, position);
+      offset = next;
+      position = actual;
       const supplied = range[`${endpoint}Position`];
       if (actual.row !== supplied?.row || actual.column !== supplied?.column) {
         throw new RangeError("Range positions must match UTF-16 indices in the snapshot");

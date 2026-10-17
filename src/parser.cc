@@ -234,6 +234,7 @@ Napi::Value Parser::Parse(const CallbackInfo &info) {
   auto callback = info[0].As<Function>();
 
   Object js_old_tree;
+  const Tree *old_tree_owner = nullptr;
   const TSTree *old_tree = nullptr;
   if (info.Length() > 1 && !info[1].IsNull() && !info[1].IsUndefined() && info[1].IsObject()) {
     js_old_tree = info[1].As<Object>();
@@ -242,8 +243,10 @@ Napi::Value Parser::Parse(const CallbackInfo &info) {
       throw TypeError::New(env, "Second argument must be a tree");
     }
     old_tree = tree->tree_;
+    old_tree_owner = tree;
   }
 
+  TreeReadGuard reading(old_tree_owner);
   CallbackInput callback_input(callback, info.Length() > 2 ? info[2] : env.Null());
 
   if (info.Length() > 3) {

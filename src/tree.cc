@@ -98,6 +98,7 @@ Napi::Value Tree::Copy(const Napi::CallbackInfo &info) {
 Napi::Value Tree::Edit(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   if (snapshot_) throw TypeError::New(env, "Cannot edit an immutable parse snapshot; use copy()");
+  if (active_readers_) throw TypeError::New(env, "Cannot edit a tree while a parser or query is reading it");
   TSInputEdit edit;
   read_number_from_js(&edit.start_point.row, info[0], "startPosition.row");
   read_byte_count_from_js(&edit.start_point.column, info[1], "startPosition.column");
