@@ -143,6 +143,11 @@ class ParseJob final : public Napi::AsyncWorker {
     input.encoding = TSInputEncodingUTF16LE;
     TSParseOptions options{state.get(), Progress};
     result = ts_parser_parse_with_options(state->parser, old_tree, input, options);
+    if (result && old_tree && !state->cancelled.load(std::memory_order_relaxed)) {
+      uint32_t count = 0;
+      std::unique_ptr<TSRange, decltype(&std::free)> ranges(ts_tree_get_changed_ranges(old_tree, result, &count), std::free);
+      if (count) changed_ranges.assign(ranges.get(), ranges.get() + count);
+    }
     // A cancelled parse must never resume against the next request's input.
     ts_parser_reset(state->parser);
   }
@@ -154,10 +159,17 @@ class ParseJob final : public Napi::AsyncWorker {
     } else if (!result) {
       deferred.Reject(Napi::Error::New(Env(), "Tree-sitter parse failed").Value());
     } else {
-      auto tree = Tree::NewInstance(Env(), result);
-      Tree::Unwrap(tree.As<Napi::Object>())->snapshot_ = true;
-      result = nullptr;
-      deferred.Resolve(tree);
+      try {
+        auto tree = Tree::NewInstance(Env(), result);
+        result = nullptr; // The wrapper owns the tree even if metadata allocation fails.
+        Tree::Unwrap(tree.As<Napi::Object>())->snapshot_ = true;
+        auto ranges = Napi::Array::New(Env(), changed_ranges.size());
+        for (uint32_t i = 0; i < changed_ranges.size(); i++) ranges[i] = RangeToJS(Env(), changed_ranges[i]);
+        tree.As<Napi::Object>().Set("changedRanges", ranges);
+        deferred.Resolve(tree);
+      } catch (const Napi::Error &error) {
+        deferred.Reject(error.Value());
+      }
     }
   }
   void OnError(const Napi::Error &error) override {
@@ -171,6 +183,7 @@ class ParseJob final : public Napi::AsyncWorker {
   std::u16string text;
   TSTree *old_tree;
   TSTree *result = nullptr;
+  std::vector<TSRange> changed_ranges;
   bool cleaned_up = false;
 };
 

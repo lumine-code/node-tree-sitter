@@ -152,6 +152,20 @@ module.exports = (NativeParser, published = () => {}, initialize = () => {}) => 
         const tree = await this.#native.parse(text, oldTree, ranges);
         signal?.throwIfAborted();
         Object.defineProperties(tree, {
+          changedRanges: {
+            value: Object.freeze(
+              tree.changedRanges.map((range) =>
+                Object.freeze({
+                  ...range,
+                  startPosition: Object.freeze(range.startPosition),
+                  endPosition: Object.freeze(range.endPosition),
+                }),
+              ),
+            ),
+            writable: false,
+            configurable: false,
+            enumerable: true,
+          },
           input: { value: text },
           language: { value: this.#language },
           revision: { value: revision, enumerable: true },

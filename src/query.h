@@ -28,6 +28,7 @@ class Query final : public Napi::ObjectWrap<Query> {
   Napi::Value Matches(const Napi::CallbackInfo &);
   Napi::Value Captures(const Napi::CallbackInfo &);
   Napi::Value GetPredicates(const Napi::CallbackInfo &);
+  Napi::Value GetMetadata(const Napi::CallbackInfo &);
   Napi::Value DisableCapture(const Napi::CallbackInfo &);
   Napi::Value DisablePattern(const Napi::CallbackInfo &);
   Napi::Value IsPatternGuaranteedAtStep(const Napi::CallbackInfo &);

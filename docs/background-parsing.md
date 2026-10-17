@@ -2,6 +2,10 @@
 
 The binding supplies portable Wasm languages and native syntax snapshots independently of editor integration.
 
+Each background snapshot includes immutable `changedRanges`, computed on the worker against the previous tree after applying its edits. A fresh parse has no previous comparison and returns an empty array; hosts must invalidate the full relevant extent for fresh parses. A text edit can produce no syntax change, so hosts must also invalidate the edited text ranges. This metadata does not mutate or retain the previous snapshot.
+
+Queries expose lazily computed, frozen `captureNames` and `captureQuantifiers` arrays, plus `patternCount()`. Quantifiers follow the native enum: zero, zero-or-one, zero-or-more, one and one-or-more. Returned matches and individual capture results include `patternIndex`; matches retain `pattern` as the existing alias. Unsupported predicates still reject at construction, rather than being silently ignored by a host.
+
 `loadLanguage(name, bytes)` returns a promise for a language usable with `BackgroundParser`, the synchronous `Parser`, and `Query`. It copies the supplied Buffer before background compilation, so callers may modify or release their original Buffer. Compilation runs on Node's shared libuv worker pool. Languages are scoped to their Node environment and must be loaded separately inside another Node worker.
 
 `new BackgroundParser(language)` creates a lightweight parser handle. Its Wasmtime store and language instance initialize lazily during the first background job, so constructing many injection parsers does not compile their stores on the JavaScript thread. One parser accepts one in-flight parse. The read-only `busy` and `closed` properties expose lifecycle state. Separate parsers can run concurrently within the shared worker-pool capacity. There is no editor-wide priority queue, latest-request coalescing or private thread pool in this library yet. Applications should bound the number of parsers rather than queue an unbounded number of requests.

@@ -1117,6 +1117,7 @@ function formatMatches(tree, matches) {
   */
 function formatCaptures(tree, captures) {
   return captures.map((c) => {
+    delete c.patternIndex;
     const node = c.node;
     delete c.node;
     c.text = tree.getText(node);

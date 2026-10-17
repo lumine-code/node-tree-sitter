@@ -20,6 +20,36 @@ const point = (text, index) => {
 const captureValues = (values) =>
   values.map((c) => [c.name, c.node.startIndex, c.node.endIndex, c.node.text, c.setProperties]);
 
+test("capture metadata and result pattern indices agree with web", () => {
+  const source = "(array (number)* @number) @owner\n(identifier) @identifier";
+  const query = new P.Query(language, source),
+    web = new Web.Query(webLanguage, source);
+  try {
+    assert.equal(query.patternCount(), web.patternCount());
+    assert.deepEqual(query.captureNames, web.captureNames);
+    assert.deepEqual(query.captureQuantifiers, web.captureQuantifiers);
+    assert.ok(Object.isFrozen(query.captureNames));
+    assert.ok(Object.isFrozen(query.captureQuantifiers));
+    assert.ok(query.captureQuantifiers.every(Object.isFrozen));
+    const root = makeParser().parse("[1,2]; value;").rootNode;
+    const parser = new Web.Parser();
+    parser.setLanguage(webLanguage);
+    const tree = parser.parse("[1,2]; value;");
+    try {
+      assert.deepEqual(
+        query.captures(root).map((c) => c.patternIndex),
+        web.captures(tree.rootNode).map((c) => c.patternIndex),
+      );
+    } finally {
+      tree.delete();
+      parser.delete();
+    }
+    assert.ok(query.matches(root).every((m) => m.pattern === m.patternIndex));
+  } finally {
+    web.delete();
+  }
+});
+
 test("low query match limits remain independent of earlier executions", () => {
   const tree = makeParser().parse("[1];");
   const query = new P.Query(language, "(array (number)* @n)\n(number) @plain");

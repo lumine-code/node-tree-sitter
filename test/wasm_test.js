@@ -12,6 +12,35 @@ before(async () => {
   await Web.Parser.init();
 });
 
+test("background snapshots include immutable syntax changes computed against the edited input", async () => {
+  const parser = new Parser.BackgroundParser(javascript);
+  try {
+    const before = await parser.parse("x;", { revision: 1 });
+    const after = await parser.parse("[1];", {
+      previous: before,
+      revision: 2,
+      edits: [{ startIndex: 0, oldEndIndex: 1, newText: "[1]" }],
+    });
+    const edited = before.copy();
+    edited.edit({
+      startIndex: 0,
+      oldEndIndex: 1,
+      newEndIndex: 3,
+      startPosition: { row: 0, column: 0 },
+      oldEndPosition: { row: 0, column: 1 },
+      newEndPosition: { row: 0, column: 3 },
+    });
+    assert.deepEqual(after.changedRanges, edited.getChangedRanges(after));
+    assert.ok(after.changedRanges.length > 0);
+    assert.ok(Object.isFrozen(after.changedRanges));
+    assert.ok(after.changedRanges.every((range) => Object.isFrozen(range) && Object.isFrozen(range.startPosition)));
+    assert.deepEqual(before.changedRanges, []);
+    assert.equal(before.rootNode.text, "x;");
+  } finally {
+    parser.close();
+  }
+});
+
 test("unchanged portable grammars produce the same trees as web-tree-sitter", async () => {
   const sources = {
     javascript: 'const café = "🦉";\r\nfunction f(x) { return `${x + 1}`; }',

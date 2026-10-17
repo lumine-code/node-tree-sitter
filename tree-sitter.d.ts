@@ -115,6 +115,8 @@ declare module "@lumine-code/node-tree-sitter" {
     export interface Snapshot extends Tree {
       readonly input: string;
       readonly revision: number;
+      /** Syntax changes against the edited previous snapshot; empty on a fresh parse. */
+      readonly changedRanges: readonly Readonly<Range>[];
       readonly language: Language;
     }
     export interface BackgroundParseOptions {
@@ -824,6 +826,8 @@ declare module "@lumine-code/node-tree-sitter" {
     }
 
     export interface QueryCapture extends QueryProperties {
+      /** Index of the originating query pattern for capture results. */
+      patternIndex?: number;
       /** The name that was used to capture the node in the query */
       name: string;
 
@@ -835,6 +839,7 @@ declare module "@lumine-code/node-tree-sitter" {
      * A match of a {@link Query} to a particular set of {@link SyntaxNode}s.
      */
     export interface QueryMatch extends QueryProperties {
+      patternIndex: number;
       /**
        * The index of the pattern that was matched.
        * Each pattern in a query is assigned a numeric index in sequence.
@@ -898,6 +903,10 @@ declare module "@lumine-code/node-tree-sitter" {
     };
 
     export class Query {
+      readonly captureNames: readonly string[];
+      /** Native quantifiers: zero, zero-or-one, zero-or-more, one, one-or-more. */
+      readonly captureQuantifiers: readonly (readonly number[])[];
+      patternCount(): number;
       /** The maximum number of in-progress matches for this cursor. */
       readonly matchLimit: number;
 

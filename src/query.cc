@@ -64,6 +64,7 @@ void Query::Init(Napi::Env env, Napi::Object exports) {
     InstanceMethod("_matches", &Query::Matches, napi_default_method),
     InstanceMethod("_captures", &Query::Captures, napi_default_method),
     InstanceMethod("_getPredicates", &Query::GetPredicates, napi_default_method),
+    InstanceMethod("_getMetadata", &Query::GetMetadata, napi_default_method),
     InstanceMethod("disableCapture", &Query::DisableCapture, napi_default_method),
     InstanceMethod("disablePattern", &Query::DisablePattern, napi_default_method),
     InstanceMethod("isPatternGuaranteedAtStep", &Query::IsPatternGuaranteedAtStep, napi_default_method),
@@ -133,6 +134,30 @@ Query::Query(const Napi::CallbackInfo &info) : Napi::ObjectWrap<Query>(info) , q
 
 Query::~Query() {
   ts_query_delete(query_);
+}
+
+Napi::Value Query::GetMetadata(const Napi::CallbackInfo &info) {
+  auto env = info.Env();
+  const uint32_t captures = ts_query_capture_count(query_);
+  const uint32_t patterns = ts_query_pattern_count(query_);
+  auto names = Array::New(env, captures);
+  for (uint32_t capture = 0; capture < captures; capture++) {
+    uint32_t length = 0;
+    const char *name = ts_query_capture_name_for_id(query_, capture, &length);
+    names[capture] = String::New(env, name, length);
+  }
+  auto quantifiers = Array::New(env, patterns);
+  for (uint32_t pattern = 0; pattern < patterns; pattern++) {
+    auto row = Array::New(env, captures);
+    for (uint32_t capture = 0; capture < captures; capture++) {
+      row[capture] = Number::New(env, ts_query_capture_quantifier_for_id(query_, pattern, capture));
+    }
+    quantifiers[pattern] = row;
+  }
+  auto result = Array::New(env, 2);
+  result[0U] = names;
+  result[1U] = quantifiers;
+  return result;
 }
 
 Query *Query::UnwrapQuery(const Napi::Value &value) {

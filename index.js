@@ -471,7 +471,21 @@ Object.defineProperties(TreeCursor.prototype, {
  * Query
  */
 
-const {_matches, _captures} = Query.prototype;
+const {_matches, _captures, _getMetadata} = Query.prototype;
+const queryMetadata = new WeakMap();
+function metadataForQuery(query) {
+  let metadata = queryMetadata.get(query);
+  if (!metadata) {
+    const [names, quantifiers] = _getMetadata.call(query);
+    metadata = { names: Object.freeze(names), quantifiers: Object.freeze(quantifiers.map(Object.freeze)) };
+    queryMetadata.set(query, metadata);
+  }
+  return metadata;
+}
+Object.defineProperties(Query.prototype, {
+  captureNames: { get() { return metadataForQuery(this).names; } },
+  captureQuantifiers: { get() { return metadataForQuery(this).quantifiers; } },
+});
 
 const PREDICATE_STEP_TYPE = {
   DONE: 0,
@@ -706,7 +720,7 @@ Query.prototype.matches = function(
     }
 
     if (this.predicates[patternIndex].every(p => p(captures))) {
-      const result = {pattern: patternIndex, captures};
+      const result = {pattern: patternIndex, patternIndex, captures};
       const setProperties = this.setProperties[patternIndex];
       const assertedProperties = this.assertedProperties[patternIndex];
       const refutedProperties = this.refutedProperties[patternIndex];
@@ -770,6 +784,7 @@ Query.prototype.captures = function(
     if (contextKind === 1) { previousContext = captures; previousAccepted = accepted; }
     if (accepted) {
       const result = contextKind === 0 ? captures[captureIndex] : {...captures[captureIndex]};
+      result.patternIndex = patternIndex;
       const setProperties = this.setProperties[patternIndex];
       const assertedProperties = this.assertedProperties[patternIndex];
       const refutedProperties = this.refutedProperties[patternIndex];
@@ -786,6 +801,8 @@ Query.prototype.captures = function(
 /*
  * LookaheadIterator
  */
+
+Query.prototype.patternCount = function() { return this.captureQuantifiers.length; };
 
 LookaheadIterator.prototype[Symbol.iterator] = function() {
   const self = this;
