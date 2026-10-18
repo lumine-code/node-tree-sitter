@@ -29,6 +29,7 @@ void Tree::Init(Napi::Env env, Napi::Object exports) {
   Function ctor = DefineClass(env, "Tree", {
     InstanceMethod("edit", &Tree::Edit, napi_default_method),
     InstanceMethod("copy", &Tree::Copy, napi_default_method),
+    InstanceMethod("_freezeSnapshot", &Tree::FreezeSnapshot, napi_default_method),
     InstanceMethod("rootNode", &Tree::RootNode, napi_default_method),
     InstanceMethod("rootNodeWithOffset", &Tree::RootNodeWithOffset, napi_default_method),
     InstanceMethod("printDotGraph", &Tree::PrintDotGraph, napi_default_method),
@@ -85,6 +86,11 @@ const Tree *Tree::UnwrapTree(const Napi::Value &value) {
 
 Napi::Value Tree::Copy(const Napi::CallbackInfo &info) {
   return NewInstance(info.Env(), ts_tree_copy(tree_));
+}
+
+Napi::Value Tree::FreezeSnapshot(const Napi::CallbackInfo &info) {
+  snapshot_ = true;
+  return info.This();
 }
 
 Napi::Value Tree::Edit(const Napi::CallbackInfo &info) {

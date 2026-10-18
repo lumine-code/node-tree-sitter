@@ -12,6 +12,221 @@ before(async () => {
   await Web.Parser.init();
 });
 
+test("synchronous snapshots publish immediately and interoperate with background snapshots", async () => {
+  const parser = new Parser.BackgroundParser(javascript);
+  try {
+    const before = await parser.parse('const café = "🦉";\r\n', { revision: 1 });
+    const retained = before.rootNode;
+    const text = '// header\r\nconst café = "🦉";\r\n';
+    const current = parser.parseSync(text, {
+      previous: before,
+      edits: [{ startIndex: 0, oldEndIndex: 0, newText: '// header\r\n' }],
+      revision: 2,
+    });
+    assert.equal(typeof current.then, "undefined");
+    assert.equal(current.revision, 2);
+    assert.equal(current.rootNode.text, text);
+    assert.equal(current.rootNode.hasError, false);
+    assert.equal(retained.text, 'const café = "🦉";\r\n');
+    assert.ok(Object.isFrozen(current.changedRanges));
+    assert.throws(() => Parser.Tree.prototype.edit.call(current, {
+      startIndex: 0, oldEndIndex: 0, newEndIndex: 0,
+      startPosition: {row: 0, column: 0},
+      oldEndPosition: {row: 0, column: 0},
+      newEndPosition: {row: 0, column: 0},
+    }), /snapshot/i);
+    assert.throws(() => Object.defineProperty(current, "input", { value: "different" }), TypeError);
+    const next = await parser.parse(text + "next;", {
+      previous: current,
+      edits: [{ startIndex: text.length, oldEndIndex: text.length, newText: "next;" }],
+      revision: 3,
+    });
+    assert.equal(next.rootNode.text, text + "next;");
+    assert.equal(current.rootNode.text, text);
+  } finally {
+    parser.close();
+  }
+});
+
+test("synchronous snapshots validate requests and preserve parser lifecycle after errors", async () => {
+  const parser = new Parser.BackgroundParser(javascript);
+  try {
+    const before = parser.parseSync("a;", { revision: 1 });
+    assert.throws(() => parser.parseSync("b;", { previous: before }), /edits do not transform/);
+    assert.equal(parser.busy, false);
+    assert.throws(() => parser.parseSync("a;", {
+      includedRanges: [{ startIndex: 0, endIndex: 2, startPosition: {row: 0, column: 1}, endPosition: {row: 0, column: 2} }],
+    }), /positions must match/);
+    const pending = parser.parse("b;");
+    assert.throws(() => parser.parseSync("c;"), /active parse/);
+    await pending;
+    assert.equal(parser.parseSync("d;").rootNode.text, "d;");
+    parser.close();
+    assert.throws(() => parser.parseSync("e;"), /closed/);
+    assert.equal(before.rootNode.text, "a;");
+  } finally {
+    parser.close();
+  }
+});
+
+test("unchanged included text can advance immutably across outside edits", async () => {
+  const point = (text, index) => {
+    const lines = text.slice(0, index).split("\n");
+    return { row: lines.length - 1, column: lines.at(-1).length };
+  };
+  const range = (text, startIndex, endIndex) => ({
+    startIndex,
+    endIndex,
+    startPosition: point(text, startIndex),
+    endPosition: point(text, endIndex),
+  });
+  for (const [name, body] of Object.entries({
+    javascript: "value;",
+    python: "value = 1",
+    json: '{"x":1}',
+    html: "<b>x</b>",
+  })) {
+    const language = await Parser.loadLanguage(name, bytes(name));
+    const parser = new Parser.BackgroundParser(language);
+    try {
+      const text = "excluded\n" + body + "\ntrailer";
+      const before = await parser.parse(text, { revision: 1, includedRanges: [range(text, 9, 9 + body.length)] });
+      const oldNode = before.rootNode;
+      const updated = "\n" + text + "!";
+      const edits = Object.freeze([
+        Object.freeze({ startIndex: 0, oldEndIndex: 0, newText: "\n" }),
+        Object.freeze({ startIndex: text.length + 1, oldEndIndex: text.length + 1, newText: "!" }),
+      ]);
+      const includedRanges = [range(updated, 10, 10 + body.length)];
+      const reused = Parser.BackgroundParser.reuseSnapshot(before, updated, { edits, includedRanges, revision: 2 });
+      assert.ok(reused, name);
+      const fresh = await parser.parse(updated, { includedRanges });
+      assert.equal(reused.rootNode.toString(), fresh.rootNode.toString(), name);
+      assert.deepEqual(reused.rootNode.startPosition, fresh.rootNode.startPosition);
+      assert.deepEqual(reused.rootNode.endPosition, fresh.rootNode.endPosition);
+      assert.equal(reused.rootNode.text, fresh.rootNode.text);
+      assert.equal(reused.input, updated);
+      assert.equal(reused.revision, 2);
+      assert.deepEqual(reused.changedRanges, []);
+      assert.equal(Reflect.set(reused, "input", "wrong"), false);
+      assert.equal(
+        Reflect.set(reused, "getText", () => "wrong"),
+        false,
+      );
+      assert.throws(() => reused.edit({}), /immutable/);
+      assert.throws(
+        () =>
+          Parser.Tree.prototype.edit.call(reused, {
+            startIndex: 0,
+            oldEndIndex: 0,
+            newEndIndex: 0,
+            startPosition: { row: 0, column: 0 },
+            oldEndPosition: { row: 0, column: 0 },
+            newEndPosition: { row: 0, column: 0 },
+          }),
+        /immutable/,
+      );
+      assert.equal(oldNode.text, body);
+      assert.equal(oldNode.startPosition.row, 1);
+      assert.equal((await parser.parse(updated, { previous: reused, includedRanges })).rootNode.text, body);
+      const columnsChanged = " " + text;
+      assert.equal(
+        Parser.BackgroundParser.reuseSnapshot(before, columnsChanged, {
+          edits: [{ startIndex: 0, oldEndIndex: 0, newText: " " }],
+          includedRanges: [range(columnsChanged, 10, 10 + body.length)],
+        }) === null,
+        false,
+      ); // Prefix on an excluded earlier line leaves columns unchanged.
+      const bodyShifted = text.slice(0, 9) + " " + text.slice(9);
+      assert.equal(
+        Parser.BackgroundParser.reuseSnapshot(before, bodyShifted, {
+          edits: [{ startIndex: 9, oldEndIndex: 9, newText: " " }],
+          includedRanges: [range(bodyShifted, 10, 10 + body.length)],
+        }),
+        null,
+      );
+    } finally {
+      parser.close();
+    }
+  }
+});
+
+test("shared frozen edit lists stay tied to their source text and do not cache accessors", async () => {
+  const parser = new Parser.BackgroundParser(javascript);
+  try {
+    const edits = Object.freeze([Object.freeze({ startIndex: 0, oldEndIndex: 5, newText: "beta;" })]);
+    for (const source of ["alpha", "a\nbcd"]) {
+      const previous = await parser.parse(source);
+      const result = await parser.parse("beta;", { previous, edits });
+      assert.deepEqual(result.rootNode.endPosition, { row: 0, column: 5 });
+    }
+    const previous = await parser.parse("alpha");
+    let newText = "beta;";
+    const dynamic = Object.freeze([
+      Object.freeze({
+        startIndex: 0,
+        oldEndIndex: 5,
+        get newText() {
+          return newText;
+        },
+      }),
+    ]);
+    await parser.parse("beta;", { previous, edits: dynamic });
+    newText = "other";
+    await assert.rejects(parser.parse("beta;", { previous, edits: dynamic }), /do not transform/);
+  } finally {
+    parser.close();
+  }
+});
+
+test("snapshot reuse rejects changed line topology and decoder-sensitive boundaries", async () => {
+  const parser = new Parser.BackgroundParser(javascript);
+  const ranges = [
+    { startIndex: 0, endIndex: 2, startPosition: { row: 0, column: 0 }, endPosition: { row: 0, column: 2 } },
+    { startIndex: 4, endIndex: 6, startPosition: { row: 0, column: 4 }, endPosition: { row: 0, column: 6 } },
+  ];
+  try {
+    const previous = await parser.parse("a;  b;", { includedRanges: ranges });
+    assert.equal(
+      Parser.BackgroundParser.reuseSnapshot(previous, "a;\n    b;", {
+        edits: [{ startIndex: 2, oldEndIndex: 4, newText: "\n    " }],
+        includedRanges: [
+          ranges[0],
+          { startIndex: 7, endIndex: 9, startPosition: { row: 1, column: 4 }, endPosition: { row: 1, column: 6 } },
+        ],
+      }),
+      null,
+    );
+    for (const text of ["\ufeffa;", "\ud800", "\udc00"]) {
+      const included = [
+        {
+          startIndex: 0,
+          endIndex: text.length,
+          startPosition: { row: 0, column: 0 },
+          endPosition: { row: 0, column: text.length },
+        },
+      ];
+      const old = await parser.parse(text, { includedRanges: included });
+      assert.equal(
+        Parser.BackgroundParser.reuseSnapshot(old, "\n" + text, {
+          edits: [{ startIndex: 0, oldEndIndex: 0, newText: "\n" }],
+          includedRanges: [
+            {
+              startIndex: 1,
+              endIndex: text.length + 1,
+              startPosition: { row: 1, column: 0 },
+              endPosition: { row: 1, column: text.length },
+            },
+          ],
+        }),
+        null,
+      );
+    }
+  } finally {
+    parser.close();
+  }
+});
+
 test("background snapshots include immutable syntax changes computed against the edited input", async () => {
   const parser = new Parser.BackgroundParser(javascript);
   try {

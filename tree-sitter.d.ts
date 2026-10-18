@@ -121,17 +121,21 @@ declare module "@lumine-code/node-tree-sitter" {
     }
     export interface BackgroundParseOptions {
       previous?: Snapshot | null;
-      edits?: SnapshotEdit[];
-      includedRanges?: Range[];
+      edits?: readonly SnapshotEdit[];
+      includedRanges?: readonly Range[];
       signal?: AbortSignal;
       revision?: number;
     }
     export class BackgroundParser {
+      /** Reuse unchanged included text with uniform row translation and unchanged columns, or return null. */
+      static reuseSnapshot(previous: Snapshot, text: string, options: Omit<BackgroundParseOptions, "previous" | "signal">): Snapshot | null;
       constructor(language: Language);
       readonly closed: boolean;
       readonly busy: boolean;
       [Symbol.dispose](): void;
       parse(text: string, options?: BackgroundParseOptions): Promise<Snapshot>;
+      /** Parse and publish an immutable snapshot before returning. */
+      parseSync(text: string, options?: Omit<BackgroundParseOptions, "signal">): Snapshot;
       cancel(): void;
       close(): void;
     }

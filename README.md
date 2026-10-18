@@ -42,7 +42,7 @@ const language = await loadLanguage('javascript', await fs.readFile('javascript.
 const parser = new BackgroundParser(language);
 try {
   const before = await parser.parse('const x = 1;', {revision: 1});
-  const after = await parser.parse('const name = 1;', {
+  const after = parser.parseSync('const name = 1;', {
     previous: before,
     edits: [{startIndex: 6, oldEndIndex: 7, newText: 'name'}],
     revision: 2,

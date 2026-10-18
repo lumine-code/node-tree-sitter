@@ -11,6 +11,18 @@ async function exercise(bytes: Buffer) {
     revision: 2,
   });
   const copy: Parser.Tree = after.copy();
+  const synchronous: Parser.Snapshot = parser.parseSync("z;", {
+    previous: after,
+    edits: [{ startIndex: 0, oldEndIndex: 1, newText: "z" }],
+    revision: 3,
+  });
+  void synchronous;
+  const reused: Parser.Snapshot | null = Parser.BackgroundParser.reuseSnapshot(after, "y;", {
+    revision: 3,
+    edits: Object.freeze([]),
+    includedRanges: Object.freeze([]),
+  });
+  void reused;
   copy.input = "updated;";
   const captures = new Parser.Query(language, "(identifier) @name").captures(copy.rootNode);
   const property: string | null | undefined = captures[0]?.setProperties?.role;

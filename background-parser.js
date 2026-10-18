@@ -7,6 +7,23 @@ function index(value, name, maximum = MAX_INDEX) {
   }
 }
 
+const editPlans = new WeakMap();
+
+function rememberPlan(edits, source, text, changes) {
+  if (!Object.isFrozen(edits)) return;
+  for (let i = 0; i < edits.length; i++) {
+    const edit = Object.getOwnPropertyDescriptor(edits, i)?.value;
+    if (!edit || !Object.isFrozen(edit)) return;
+    if (
+      ["startIndex", "oldEndIndex", "newText"].some(
+        (key) => !Object.hasOwn(Object.getOwnPropertyDescriptor(edit, key) ?? {}, "value"),
+      )
+    )
+      return;
+  }
+  editPlans.set(edits, { source, text, changes });
+}
+
 function preparePrevious(previous, edits, text, language) {
   if (!previous) {
     if (edits.length) throw new TypeError("edits require a previous snapshot");
@@ -19,6 +36,12 @@ function preparePrevious(previous, edits, text, language) {
     if (previous.input !== text)
       throw new Error("edits do not transform the previous snapshot into the requested text");
     return previous;
+  }
+  const plan = editPlans.get(edits);
+  if (plan?.source === previous.input && plan.text === text) {
+    const copy = previous.copy();
+    for (const change of plan.changes) copy.edit(change);
+    return copy;
   }
   if (edits.length === 1) {
     const { startIndex, oldEndIndex, newText } = edits[0];
@@ -33,19 +56,22 @@ function preparePrevious(previous, edits, text, language) {
     }
     const startPosition = advanceText(source, 0, startIndex);
     const copy = previous.copy();
-    copy.edit({
+    const change = {
       startIndex,
       oldEndIndex,
       newEndIndex: startIndex + newText.length,
       startPosition,
       oldEndPosition: advanceText(source, startIndex, oldEndIndex, startPosition),
       newEndPosition: advanceText(newText, 0, newText.length, startPosition),
-    });
+    };
+    copy.edit(change);
+    rememberPlan(edits, source, text, [change]);
     return copy;
   }
   const normalized = [];
   let length = previous.input.length;
-  for (const edit of edits) {
+  for (let i = 0; i < edits.length; i++) {
+    const edit = edits[i];
     const { startIndex, oldEndIndex, newText } = edit;
     index(startIndex, "startIndex", length);
     index(oldEndIndex, "oldEndIndex", length);
@@ -65,6 +91,7 @@ function preparePrevious(previous, edits, text, language) {
   if (prepared.text !== text) throw new Error("edits do not transform the previous snapshot into the requested text");
   const copy = previous.copy();
   for (const change of prepared.changes) copy.edit(change);
+  rememberPlan(edits, previous.input, text, prepared.changes);
   return copy;
 }
 
@@ -100,10 +127,90 @@ function validateRanges(ranges, text) {
   return normalized;
 }
 
-module.exports = (NativeParser, published = () => {}, initialize = () => {}) => {
+module.exports = (NativeParser, published = () => {}, initialize = () => {}, freeze = () => {}, createSynchronousParser) => {
   const snapshots = new WeakSet();
+  function publishSnapshot(tree, text, language, revision) {
+    freeze(tree);
+    Object.defineProperties(tree, {
+      changedRanges: {
+        value: Object.freeze(
+          (tree.changedRanges ?? []).map((range) =>
+            Object.freeze({
+              ...range,
+              startPosition: Object.freeze(range.startPosition),
+              endPosition: Object.freeze(range.endPosition),
+            }),
+          ),
+        ),
+        writable: false,
+        configurable: false,
+        enumerable: true,
+      },
+      input: { value: text, writable: false, configurable: false },
+      language: { value: language, writable: false, configurable: false },
+      revision: { value: revision, enumerable: true },
+      getText: { value: (node) => text.slice(node.startIndex, node.endIndex), writable: false, configurable: false },
+      edit: {
+        value: () => {
+          throw new TypeError("Cannot edit an immutable parse snapshot; use copy()");
+        },
+      },
+    });
+    snapshots.add(tree);
+    published(tree);
+  }
   return class BackgroundParser {
+    static reuseSnapshot(previous, text, { edits = [], includedRanges, revision = 0 } = {}) {
+      if (!snapshots.has(previous)) throw new TypeError("previous must be an immutable background snapshot");
+      if (typeof text !== "string") throw new TypeError("Expected a string snapshot");
+      index(text.length, "text length");
+      index(revision, "revision", Number.MAX_SAFE_INTEGER);
+      if (!Array.isArray(edits)) throw new TypeError("edits must be an array");
+      const ranges = validateRanges(includedRanges, text);
+      if (!ranges?.length) return null;
+      const oldRanges = previous.getIncludedRanges();
+      if (oldRanges.length !== ranges.length) return null;
+      const rowShift = ranges[0].startPosition.row - oldRanges[0].startPosition.row;
+      for (let i = 0; i < ranges.length; i++) {
+        const before = oldRanges[i],
+          after = ranges[i];
+        if (
+          before.endIndex > previous.input.length ||
+          after.startPosition.row - before.startPosition.row !== rowShift ||
+          after.endPosition.row - before.endPosition.row !== rowShift ||
+          before.startPosition.column !== after.startPosition.column ||
+          before.endPosition.column !== after.endPosition.column ||
+          previous.input.slice(before.startIndex, before.endIndex) !== text.slice(after.startIndex, after.endIndex)
+        )
+          return null;
+        // Lexer initialization treats a BOM at byte zero specially, and a
+        // UTF-16 boundary must not make lookahead depend on excluded text.
+        const first = previous.input.charCodeAt(before.startIndex);
+        const last = previous.input.charCodeAt(before.endIndex - 1);
+        if ((first >= 0xdc00 && first <= 0xdfff) || (last >= 0xd800 && last <= 0xdbff)) return null;
+        if (first === 0xfeff && (before.startIndex === 0) !== (after.startIndex === 0)) return null;
+      }
+      let tree = preparePrevious(previous, edits, text, previous.language);
+      if (tree === previous) tree = previous.copy();
+      const shifted = tree.getIncludedRanges();
+      for (let i = 0; i < ranges.length; i++) {
+        const actual = shifted[i],
+          expected = ranges[i];
+        if (
+          actual.startIndex !== expected.startIndex ||
+          actual.endIndex !== expected.endIndex ||
+          actual.startPosition.row !== expected.startPosition.row ||
+          actual.startPosition.column !== expected.startPosition.column ||
+          actual.endPosition.row !== expected.endPosition.row ||
+          actual.endPosition.column !== expected.endPosition.column
+        )
+          return null;
+      }
+      publishSnapshot(tree, text, previous.language, revision);
+      return tree;
+    }
     #native;
+    #synchronous;
     #language;
     #busy = false;
     #closed = false;
@@ -112,6 +219,36 @@ module.exports = (NativeParser, published = () => {}, initialize = () => {}) => 
       this.#native = new NativeParser(language);
       initialize(language);
       this.#language = language;
+    }
+    parseSync(text, options = {}) {
+      if (this.#closed) throw new Error("Parser is closed");
+      if (this.#busy) throw new Error("Parser already has an active parse");
+      this.#busy = true;
+      this.#cancelled = false;
+      try {
+        const { previous = null, edits = [], includedRanges, revision = 0 } = options;
+        if (typeof text !== "string") throw new TypeError("Snapshot parsing requires a string");
+        index(text.length, "text length");
+        index(revision, "revision", Number.MAX_SAFE_INTEGER);
+        if (!Array.isArray(edits)) throw new TypeError("edits must be an array");
+        const ranges = validateRanges(includedRanges, text);
+        if (previous !== null && !snapshots.has(previous))
+          throw new TypeError("previous must be an immutable snapshot");
+        const oldTree = preparePrevious(previous, edits, text, this.#language);
+        if (this.#cancelled || this.#closed) {
+          const error = new Error("Parsing was cancelled");
+          error.name = "AbortError";
+          throw error;
+        }
+        this.#synchronous ??= createSynchronousParser(this.#language);
+        const tree = this.#synchronous.parse(text, oldTree, { includedRanges: ranges });
+        if (!tree) throw new Error("Synchronous snapshot parsing did not complete");
+        tree.changedRanges = oldTree ? oldTree.getChangedRanges(tree) : [];
+        publishSnapshot(tree, text, this.#language, revision);
+        return tree;
+      } finally {
+        this.#busy = false;
+      }
     }
     async parse(text, options = {}) {
       if (this.#closed) throw new Error("Parser is closed");
@@ -151,33 +288,7 @@ module.exports = (NativeParser, published = () => {}, initialize = () => {}) => 
         }
         const tree = await this.#native.parse(text, oldTree, ranges);
         signal?.throwIfAborted();
-        Object.defineProperties(tree, {
-          changedRanges: {
-            value: Object.freeze(
-              tree.changedRanges.map((range) =>
-                Object.freeze({
-                  ...range,
-                  startPosition: Object.freeze(range.startPosition),
-                  endPosition: Object.freeze(range.endPosition),
-                }),
-              ),
-            ),
-            writable: false,
-            configurable: false,
-            enumerable: true,
-          },
-          input: { value: text },
-          language: { value: this.#language },
-          revision: { value: revision, enumerable: true },
-          getText: { value: (node) => text.slice(node.startIndex, node.endIndex) },
-          edit: {
-            value: () => {
-              throw new TypeError("Cannot edit an immutable parse snapshot; use copy()");
-            },
-          },
-        });
-        snapshots.add(tree);
-        published(tree);
+        publishSnapshot(tree, text, this.#language, revision);
         return tree;
       } finally {
         this.#busy = false;
@@ -190,6 +301,7 @@ module.exports = (NativeParser, published = () => {}, initialize = () => {}) => 
     }
     close() {
       this.#closed = true;
+      this.#synchronous = null;
       this.#native.close();
     }
     get closed() {

@@ -46,6 +46,7 @@ class Tree final : public Napi::ObjectWrap<Tree> {
  private:
   Napi::Value Edit(const Napi::CallbackInfo &info);
   Napi::Value Copy(const Napi::CallbackInfo &info);
+  Napi::Value FreezeSnapshot(const Napi::CallbackInfo &info);
   Napi::Value RootNode(const Napi::CallbackInfo &info);
   Napi::Value RootNodeWithOffset(const Napi::CallbackInfo &info);
   Napi::Value PrintDotGraph(const Napi::CallbackInfo &info);

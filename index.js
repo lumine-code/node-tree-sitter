@@ -14,6 +14,8 @@ const nodeConstruction = Symbol('syntax-node-construction');
 
 const {rootNode, rootNodeWithOffset, edit, copy} = Tree.prototype;
 const { _cacheNode: cacheNode, _cacheNodes: cacheNodes } = Tree.prototype;
+const freezeSnapshot = Tree.prototype._freezeSnapshot;
+delete Tree.prototype._freezeSnapshot;
 delete Tree.prototype._cacheNode;
 delete Tree.prototype._cacheNodes;
 Tree.prototype.copy = function() {
@@ -1044,5 +1046,7 @@ module.exports.loadLanguage = async (name, bytes) => {
 module.exports.BackgroundParser = require('./background-parser')(
   binding.BackgroundParser,
   tree => immutableSnapshots.add(tree),
-  language => { if (!language.nodeSubclasses) initializeLanguageNodeClasses(language); }
+  language => { if (!language.nodeSubclasses) initializeLanguageNodeClasses(language); },
+  tree => freezeSnapshot.call(tree),
+  language => new Parser().setLanguage(language)
 );
