@@ -325,13 +325,19 @@ void CacheNodeForTree(Tree *tree, Napi::Env env, Object js_node) {
   const std::array<uint32_t, 4> context{fields[2], fields[3], fields[4], fields[5]};
   auto found = tree->cached_nodes_.find(key);
   auto *head = found == tree->cached_nodes_.end() ? nullptr : found->second;
-  if (head && !tree->has_offset_views_) return;
+  if (head && !tree->has_offset_views_) {
+    if (!head->node.Value().IsEmpty()) return;
+    // A weak wrapper can be collected before its finalizer runs. Detach that
+    // entry so the replacement is cached immediately and the old finalizer
+    // cannot remove the replacement's identity later.
+    head->tree = nullptr;
+    tree->cached_nodes_.erase(key);
+    head = nullptr;
+  }
   for (auto *entry = head; entry; entry = tree->NextCached(entry)) {
-    // Preserve the original weak-cache policy: a collected wrapper may still
-    // have a pending finalizer. Let it unlink before caching its replacement.
-    // Recreating native weak references here adds avoidable post-GC churn.
     auto saved = tree->node_contexts_.find(entry);
-    if (saved != tree->node_contexts_.end() && saved->second.context == context) return;
+    if (saved != tree->node_contexts_.end() && saved->second.context == context &&
+        !entry->node.Value().IsEmpty()) return;
   }
   auto *cache_entry = new Tree::NodeCacheEntry{tree, key, {}};
   if (tree->has_offset_views_) tree->node_contexts_[cache_entry] = Tree::NodeView{context, head};

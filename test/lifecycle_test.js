@@ -26,6 +26,23 @@ async function collectReferences(refs) {
   assert.equal(refs.filter((ref) => ref.deref() !== undefined).length, 0, "unreachable owners must be collectable");
 }
 
+test("node identity survives collection before stale native cache finalizers run", { skip: !global.gc }, () => {
+  for (let iteration = 0; iteration < 20; iteration++) {
+    const tree = parser().parse("value;");
+    const child = tree.rootNode.namedChild(0);
+    global.gc();
+    const root = tree.rootNode;
+    assert.equal(child.parent, root);
+    assert.equal(tree.rootNode, root);
+
+    tree.rootNodeWithOffset(4, {row: 2, column: 4});
+    global.gc();
+    const offset = tree.rootNodeWithOffset(4, {row: 2, column: 4});
+    assert.equal(tree.rootNodeWithOffset(4, {row: 2, column: 4}), offset);
+    assert.equal(tree.rootNode, root);
+  }
+});
+
 test("logger closures referring to their parser do not root an unreachable cycle", { skip: !global.gc }, async () => {
   const refs = (() => {
     const result = [];
