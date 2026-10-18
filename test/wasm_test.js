@@ -69,6 +69,44 @@ test("synchronous snapshots validate requests and preserve parser lifecycle afte
   }
 });
 
+test("bounded initial snapshot parsing resets partial work before another request", async () => {
+  const parser = new Parser.BackgroundParser(javascript);
+  try {
+    const previous = parser.parseSync("before;", { revision: 1 });
+    assert.equal(parser.tryParseSync("const value = 1;\n".repeat(50000), { timeoutMicros: 1 }), null);
+    assert.equal(parser.busy, false);
+    assert.equal(previous.rootNode.text, "before;");
+    const next = parser.parseSync("after;");
+    assert.equal(next.rootNode.text, "after;");
+    assert.equal(next.rootNode.hasError, false);
+    assert.throws(() => parser.tryParseSync("bad;", {timeoutMicros: -1}), RangeError);
+    const background = await parser.parse("background;");
+    assert.equal(background.rootNode.text, "background;");
+  } finally {
+    parser.close();
+  }
+});
+
+test("synchronous snapshot logging respects cancellation, close and retained snapshots", () => {
+  const parser = new Parser.BackgroundParser(javascript);
+  const before = parser.parseSync("before;");
+  let logged = 0;
+  parser.setLogger(() => { logged++; });
+  assert.equal(typeof parser.getLogger(), "function");
+  assert.equal(parser.parseSync("next;").rootNode.text, "next;");
+  assert.ok(logged > 0);
+  parser.setLogger(() => parser.cancel());
+  assert.throws(() => parser.parseSync("cancelled;"), {name: "AbortError"});
+  assert.equal(parser.busy, false);
+  parser.setLogger(null);
+  assert.equal(parser.getLogger(), null);
+  assert.equal(parser.parseSync("ready;").rootNode.text, "ready;");
+  parser.setLogger(() => parser.close());
+  assert.throws(() => parser.parseSync("closed;"), {name: "AbortError"});
+  assert.equal(before.rootNode.text, "before;");
+  assert.equal(parser.closed, true);
+});
+
 test("unchanged included text can advance immutably across outside edits", async () => {
   const point = (text, index) => {
     const lines = text.slice(0, index).split("\n");

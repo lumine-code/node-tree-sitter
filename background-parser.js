@@ -221,12 +221,32 @@ module.exports = (NativeParser, published = () => {}, initialize = () => {}, fre
       this.#language = language;
     }
     parseSync(text, options = {}) {
+      return this.#parseSynchronous(text, options, false);
+    }
+    tryParseSync(text, options = {}) {
+      return this.#parseSynchronous(text, options, true);
+    }
+    setLogger(logger) {
+      if (this.#closed) throw new Error("Parser is closed");
+      if (this.#busy) throw new Error("Parser already has an active parse");
+      if (!this.#synchronous && (logger == null || logger === false)) return this;
+      this.#synchronous ??= createSynchronousParser(this.#language);
+      this.#synchronous.setLogger(logger);
+      return this;
+    }
+    getLogger() {
+      return this.#synchronous?.getLogger() ?? null;
+    }
+    #parseSynchronous(text, options, bounded) {
       if (this.#closed) throw new Error("Parser is closed");
       if (this.#busy) throw new Error("Parser already has an active parse");
       this.#busy = true;
       this.#cancelled = false;
+      let parser;
       try {
         const { previous = null, edits = [], includedRanges, revision = 0 } = options;
+        const timeoutMicros = bounded ? options.timeoutMicros ?? 5000 : 0;
+        index(timeoutMicros, "timeoutMicros", Number.MAX_SAFE_INTEGER);
         if (typeof text !== "string") throw new TypeError("Snapshot parsing requires a string");
         index(text.length, "text length");
         index(revision, "revision", Number.MAX_SAFE_INTEGER);
@@ -240,13 +260,25 @@ module.exports = (NativeParser, published = () => {}, initialize = () => {}, fre
           error.name = "AbortError";
           throw error;
         }
-        this.#synchronous ??= createSynchronousParser(this.#language);
-        const tree = this.#synchronous.parse(text, oldTree, { includedRanges: ranges });
-        if (!tree) throw new Error("Synchronous snapshot parsing did not complete");
+        parser = this.#synchronous ??= createSynchronousParser(this.#language);
+        parser.setTimeoutMicros(timeoutMicros);
+        const tree = parser.parse(text, oldTree, { includedRanges: ranges });
+        if (this.#cancelled || this.#closed) {
+          parser.reset();
+          const error = new Error("Parsing was cancelled");
+          error.name = "AbortError";
+          throw error;
+        }
+        if (!tree) {
+          parser.reset();
+          if (bounded) return null;
+          throw new Error("Synchronous snapshot parsing did not complete");
+        }
         tree.changedRanges = oldTree ? oldTree.getChangedRanges(tree) : [];
         publishSnapshot(tree, text, this.#language, revision);
         return tree;
       } finally {
+        parser?.setTimeoutMicros(0);
         this.#busy = false;
       }
     }

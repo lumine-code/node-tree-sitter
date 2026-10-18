@@ -17,6 +17,8 @@ async function exercise(bytes: Buffer) {
     revision: 3,
   });
   void synchronous;
+  const bounded: Parser.Snapshot | null = parser.tryParseSync("small;", { timeoutMicros: 1000 });
+  void bounded;
   const reused: Parser.Snapshot | null = Parser.BackgroundParser.reuseSnapshot(after, "y;", {
     revision: 3,
     edits: Object.freeze([]),

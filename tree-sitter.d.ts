@@ -136,6 +136,11 @@ declare module "@lumine-code/node-tree-sitter" {
       parse(text: string, options?: BackgroundParseOptions): Promise<Snapshot>;
       /** Parse and publish an immutable snapshot before returning. */
       parseSync(text: string, options?: Omit<BackgroundParseOptions, "signal">): Snapshot;
+      /** Return null on timeout; defaults to a 5000-microsecond native parse budget. */
+      tryParseSync(text: string, options?: Omit<BackgroundParseOptions, "signal"> & { timeoutMicros?: number }): Snapshot | null;
+      /** Logging is synchronous-only; worker parses never invoke JavaScript loggers. */
+      setLogger(logger?: Logger | false | null): this;
+      getLogger(): Logger | null;
       cancel(): void;
       close(): void;
     }
