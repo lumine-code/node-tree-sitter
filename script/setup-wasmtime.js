@@ -2,7 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { execFileSync } = require("node:child_process");
+const extractArchive = require("./extract-archive");
 const version = "48.0.1"; // Matches the pinned Tree-sitter runtime's Wasmtime dependency.
 const targets = {
   "win32-x64": ["x86_64-windows", "40bd84d36dfaa1e0a9658fbb16377952a116469cc2ebe61c1ca6e4ad07104989"],
@@ -29,7 +29,7 @@ async function main() {
   if (crypto.createHash("sha256").update(fs.readFileSync(archive)).digest("hex") !== target[1]) {
     throw new Error("Wasmtime archive checksum mismatch");
   }
-  execFileSync("tar", ["-xf", archive, "-C", directory], { stdio: "inherit" });
+  extractArchive(archive, directory);
   fs.writeFileSync(path.join(directory, "wasmtime-root.txt"), path.join(directory, name));
   console.log(`Wasmtime ${version}: ${path.join(directory, name)}`);
 }

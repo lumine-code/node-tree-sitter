@@ -3,7 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { execFileSync } = require("node:child_process");
+const extractArchive = require("./extract-archive");
 const revision = "10eb5ac119eec9cb4267a8e035066473983f5f3a";
 const checksum = "71bbc0a7a98013b519b104e281e6ad98524a438c8c822a095e6f27de05d15562";
 
@@ -25,19 +25,10 @@ async function main() {
     throw new Error("Tree-sitter source archive checksum mismatch");
   }
   const staging = fs.mkdtempSync(path.join(cache, "tree-sitter-source-"));
-  execFileSync(
-    "tar",
-    [
-      "-xf",
-      archive,
-      "-C",
-      staging,
-      "--strip-components=1",
-      `tree-sitter-${revision}/lib/include`,
-      `tree-sitter-${revision}/lib/src`,
-    ],
-    { stdio: "inherit" },
-  );
+  extractArchive(archive, staging, {
+    stripComponents: 1,
+    members: [`tree-sitter-${revision}/lib/include`, `tree-sitter-${revision}/lib/src`],
+  });
   fs.mkdirSync(destination, { recursive: true });
   // Both absolute paths are children of this package; no existing source is moved.
   if (!staging.startsWith(cache + path.sep) || !destination.startsWith(root + path.sep))
