@@ -4,6 +4,9 @@ Provides native Tree-sitter bindings with portable Wasm grammars.
 
 Fork of [tree-sitter/node-tree-sitter](https://github.com/tree-sitter/node-tree-sitter).
 
+> [!WARNING]
+> **This package is deprecated.** [Lumine](https://github.com/lumine-code/lumine) now uses [web-tree-sitter](https://github.com/tree-sitter/tree-sitter/tree/master/lib/binding_web) for its portable grammar runtime. This native runtime experiment is retained for reference. This repository is archived and no longer maintained.
+
 Consumed through immutable GitHub commit pins. This package is not published to npm.
 
 ## Features
