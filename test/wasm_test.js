@@ -107,6 +107,27 @@ test("synchronous snapshot logging respects cancellation, close and retained sna
   assert.equal(parser.closed, true);
 });
 
+test("parse planning uses a private edited tree with accurate text and retains its snapshot", () => {
+  const parser = new Parser.BackgroundParser(javascript);
+  try {
+    const previous = parser.parseSync("before;\r\n");
+    const prepared = Parser.BackgroundParser.prepareTree(previous, "longer;\r\n", {
+      edits: [{startIndex: 0, oldEndIndex: 6, newText: "longer"}],
+    });
+    assert.notEqual(prepared, previous);
+    assert.equal(prepared.rootNode.text, "longer;\r\n");
+    assert.equal(prepared.rootNode.hasChanges, true);
+    assert.equal(previous.rootNode.hasChanges, false);
+    assert.equal(previous.rootNode.text, "before;\r\n");
+    assert.throws(() => parser.parseSync("longer;\r\n", {previous: prepared}), /immutable snapshot/);
+    const copy = Parser.BackgroundParser.prepareTree(previous, previous.input);
+    assert.notEqual(copy, previous);
+    assert.equal(copy.rootNode.text, previous.input);
+  } finally {
+    parser.close();
+  }
+});
+
 test("unchanged included text can advance immutably across outside edits", async () => {
   const point = (text, index) => {
     const lines = text.slice(0, index).split("\n");

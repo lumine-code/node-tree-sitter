@@ -127,6 +127,8 @@ declare module "@lumine-code/node-tree-sitter" {
       revision?: number;
     }
     export class BackgroundParser {
+      /** Return a private mutable tree with replayed edits and current text for parse planning. */
+      static prepareTree(previous: Snapshot, text: string, options?: { edits?: readonly SnapshotEdit[] }): Tree;
       /** Reuse unchanged included text with uniform row translation and unchanged columns, or return null. */
       static reuseSnapshot(previous: Snapshot, text: string, options: Omit<BackgroundParseOptions, "previous" | "signal">): Snapshot | null;
       constructor(language: Language);

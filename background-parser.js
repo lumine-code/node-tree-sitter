@@ -160,6 +160,17 @@ module.exports = (NativeParser, published = () => {}, initialize = () => {}, fre
     published(tree);
   }
   return class BackgroundParser {
+    static prepareTree(previous, text, { edits = [] } = {}) {
+      if (!snapshots.has(previous)) throw new TypeError("previous must be an immutable snapshot");
+      if (typeof text !== "string") throw new TypeError("Expected a string snapshot");
+      index(text.length, "text length");
+      if (!Array.isArray(edits)) throw new TypeError("edits must be an array");
+      let tree = preparePrevious(previous, edits, text, previous.language);
+      if (tree === previous) tree = previous.copy();
+      tree.input = text;
+      tree.getText = node => text.slice(node.startIndex, node.endIndex);
+      return tree;
+    }
     static reuseSnapshot(previous, text, { edits = [], includedRanges, revision = 0 } = {}) {
       if (!snapshots.has(previous)) throw new TypeError("previous must be an immutable background snapshot");
       if (typeof text !== "string") throw new TypeError("Expected a string snapshot");
